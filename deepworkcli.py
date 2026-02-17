@@ -485,7 +485,7 @@ class DeepWorkCLI:
                 if rlist:
                     char = sys.stdin.read(1)
                     if char == '\n' or char == '\r':
-                        cmd = buffer.strip().lower()
+                        cmd = buffer.strip()
                         buffer = ""
                         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                         print()
@@ -526,7 +526,7 @@ class DeepWorkCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [i#] ignore, [>>] defer all, [w] work, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [i#] ignore, [N] prioritize, [>>] defer all, [w] work, [q] quit")
 
     def render_work(self):
         if not self.triage_stack:
@@ -570,10 +570,11 @@ class DeepWorkCLI:
 
     def handle_command(self, cmd):
         try:
-            cmd_clean = re.sub(r'^([a-z])(\d)', r'\1 \2', cmd) 
+            cmd_clean = re.sub(r'^([a-zA-Z])(\d)', r'\1 \2', cmd)
             parts = cmd_clean.split()
             if not parts: return
-            base_cmd = parts[0]
+            base_cmd_orig = parts[0]
+            base_cmd = base_cmd_orig.lower()
             
             if base_cmd == 'q':
                 active = self.triage_stack
@@ -594,6 +595,21 @@ class DeepWorkCLI:
             if base_cmd == 't': 
                 self.mode = "TRIAGE"; self.task_start_time = None
                 self.break_start_time = None
+                return
+
+            if base_cmd_orig == 'N' and self.mode in ["WORK", "BREAK", "TRIAGE"]:
+                line = input("Enter prioritized task: ")
+                if not line.strip(): return
+
+                clean = line.strip()
+                clean = re.sub(r'^\[[x\->\s]?\]\s*', '', clean)
+                item = {'line': f"[] {clean}", 'notes': []}
+
+                self.commit_to_ledger("Prioritized Task", [item])
+                self.triage_stack.insert(0, item)
+                self.task_start_time = None
+                self.initial_stack = copy.deepcopy(self.triage_stack)
+                self.last_msg = "Task Added & Prioritized"
                 return
 
             if self.mode == "BREAK":
@@ -665,21 +681,6 @@ class DeepWorkCLI:
                         return
 
             elif self.mode in ["WORK", "BREAK"]:
-                if base_cmd == 'N':
-                    line = input("Enter prioritized task: ")
-                    if not line.strip(): return
-
-                    clean = line.strip()
-                    clean = re.sub(r'^\[[x\->\s]?\]\s*', '', clean)
-                    item = {'line': f"[] {clean}", 'notes': []}
-
-                    self.commit_to_ledger("Prioritized Task", [item])
-                    self.triage_stack.insert(0, item)
-                    self.task_start_time = None
-                    self.initial_stack = copy.deepcopy(self.triage_stack)
-                    self.last_msg = "Task Added & Prioritized"
-                    return
-
                 if not self.triage_stack:
                     if base_cmd == 'n' or base_cmd == 'q':
                         return "QUIT"

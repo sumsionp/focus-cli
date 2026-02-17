@@ -365,7 +365,7 @@ class DeepWorkCLI:
         print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
 
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [n] add, [t] triage, [w] work, [q] quit")
+        print("Cmds: [N] prioritize, [n] add, [t] triage, [w] work, [q] quit")
 
     def update_timer_ui(self):
         """Minimal redraw of just the header to preserve terminal selection."""
@@ -566,7 +566,7 @@ class DeepWorkCLI:
             n_color = "\033[1;36m" if '[]' in n else ""
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [n] add, [i] ignore, [t] triage, [q] quit")
+        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
@@ -612,7 +612,7 @@ class DeepWorkCLI:
                     self.last_msg = "Break time overload! Doing nothing."
                     self.break_quote = random.choice(BREAK_QUOTES)
                     return
-                elif base_cmd == 'n':
+                elif base_cmd in ['n', 'N']:
                     pass # Handled by shared WORK/BREAK logic
                 elif base_cmd in ['t', 'q']:
                     pass # Handled by common logic
@@ -665,6 +665,21 @@ class DeepWorkCLI:
                         return
 
             elif self.mode in ["WORK", "BREAK"]:
+                if base_cmd == 'N':
+                    line = input("Enter prioritized task: ")
+                    if not line.strip(): return
+
+                    clean = line.strip()
+                    clean = re.sub(r'^\[[x\->\s]?\]\s*', '', clean)
+                    item = {'line': f"[] {clean}", 'notes': []}
+
+                    self.commit_to_ledger("Prioritized Task", [item])
+                    self.triage_stack.insert(0, item)
+                    self.task_start_time = None
+                    self.initial_stack = copy.deepcopy(self.triage_stack)
+                    self.last_msg = "Task Added & Prioritized"
+                    return
+
                 if not self.triage_stack:
                     if base_cmd == 'n' or base_cmd == 'q':
                         return "QUIT"

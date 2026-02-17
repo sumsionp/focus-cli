@@ -229,12 +229,12 @@ class DeepWorkCLI:
         target_date = parse_defer_date(defer_date_str)
         if not target_date:
             self.last_msg = f"Invalid date: {defer_date_str}"
-            return False
+            return True
 
         if not self.triage_stack:
             return True
 
-        if base_cmd == 'd':
+        if base_cmd == '>>':
             count = len(self.triage_stack)
             results = []
             last_res = ""
@@ -528,7 +528,7 @@ class DeepWorkCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [i#] ignore, [d] defer all, [w] work, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [i#] ignore, [>>] defer all, [w] work, [q] quit")
 
     def render_work(self):
         if not self.triage_stack:
@@ -568,7 +568,7 @@ class DeepWorkCLI:
             n_color = "\033[1;36m" if '[]' in n else ""
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [d] defer all, [f#] focus, [n] add, [i] ignore, [t] triage, [q] quit")
+        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
@@ -662,7 +662,7 @@ class DeepWorkCLI:
                     item = self.triage_stack[int(src_str.split('.')[0])]['notes'].pop(int(src_str.split('.')[1])) if '.' in src_str else self.triage_stack.pop(int(src_str))['line']
                     self.triage_stack[dest_idx]['notes'].append(item)
 
-                elif base_cmd in ['>', 'd']:
+                elif base_cmd in ['>', '>>']:
                     if self._handle_defer_command(base_cmd, parts):
                         return
 
@@ -765,12 +765,12 @@ class DeepWorkCLI:
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
 
-                if base_cmd in ['x', '-', '>', 'd', 'i']:
+                if base_cmd in ['x', '-', '>', '>>', 'i']:
                     if self.mode == "BREAK":
                         self.last_msg = "Command disabled during break."
                         return
 
-                    if base_cmd in ['>', 'd']:
+                    if base_cmd in ['>', '>>']:
                         if self._handle_defer_command(base_cmd, parts):
                             return
 

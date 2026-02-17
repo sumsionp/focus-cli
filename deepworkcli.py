@@ -41,9 +41,44 @@ logging.basicConfig(
 def get_timestamp():
     return datetime.now().strftime('%m/%d/%Y %I:%M:%S %p')
 
-def get_tomorrow_file():
-    tomorrow = datetime.now() + timedelta(days=1)
-    return tomorrow.strftime(f'{DATE_FORMAT}-plan.txt')
+def parse_defer_date(date_str):
+    now = datetime.now()
+    date_str = date_str.lower().strip()
+
+    if not date_str or date_str == 'today':
+        return now
+    if date_str == 'tomorrow':
+        return now + timedelta(days=1)
+
+    days_map = {
+        'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3, 'fri': 4, 'sat': 5, 'sun': 6,
+        'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3, 'friday': 4, 'saturday': 5, 'sunday': 6
+    }
+
+    if date_str in days_map:
+        target_weekday = days_map[date_str]
+        current_weekday = now.weekday()
+        days_ahead = target_weekday - current_weekday
+        if days_ahead <= 0:
+            days_ahead += 7
+        return now + timedelta(days=days_ahead)
+
+    # Try YYYYMMDD
+    try:
+        return datetime.strptime(date_str, '%Y%m%d')
+    except ValueError:
+        pass
+
+    # Try MM/DD/YYYY
+    try:
+        return datetime.strptime(date_str, '%m/%d/%Y')
+    except ValueError:
+        pass
+
+    return None
+
+def get_target_file(date):
+    return date.strftime(f'{DATE_FORMAT}-plan.txt')
 
 class DeepWorkCLI:
     def __init__(self):
@@ -167,6 +202,87 @@ class DeepWorkCLI:
                 'line': f"[] {content}" if entry['is_task'] else content,
                 'notes': entry['notes']
             })
+
+    def _prepare_defer_tasks(self, task, target_date):
+        """Prepare tasks for ledger and target file without committing them."""
+        is_today = target_date.date() == datetime.now().date()
+        if is_today:
+            return task, None, "today"
+        else:
+            target_file = get_target_file(target_date)
+            # Target version: main task [], subtasks preserve status
+            target_task = self._prepare_task_with_markers(task, '[]', '[]')
+            # Current ledger version: main task [>], pending subtasks [>], others preserve
+            ledger_task = self._prepare_task_with_markers(task, '[>]', '[>]')
+            return ledger_task, target_task, target_file
+
+    def _handle_defer_command(self, base_cmd, parts):
+        """Common logic for > and >> deferral commands."""
+        defer_date_str = " ".join(parts[1:])
+        target_date = parse_defer_date(defer_date_str)
+        if not target_date:
+            self.last_msg = f"Invalid date: {defer_date_str}"
+            return True
+
+        if not self.triage_stack:
+            return True
+
+        ledger_items = []
+        target_items = []
+        target_res = None
+
+        if base_cmd == '>>':
+            count = len(self.triage_stack)
+            while self.triage_stack:
+                task = self.triage_stack.pop(0)
+                l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
+                ledger_items.append(l_task)
+                if t_task: target_items.append(t_task)
+                target_res = res
+
+            if target_res == "today":
+                self.commit_to_ledger("Deferred", ledger_items)
+                self.triage_stack.extend(ledger_items)
+                self.last_msg = f"Deferred {count} items to end of today's stack"
+            else:
+                self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
+                self.commit_to_ledger("Deferred", ledger_items)
+                self.last_msg = f"Deferred {count} items to {target_res}"
+        else: # base_cmd == '>'
+            task = self.triage_stack.pop(0)
+            l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
+            if res == "today":
+                self.commit_to_ledger("Deferred", [l_task])
+                self.triage_stack.append(l_task)
+                self.last_msg = "Deferred to end of today's stack"
+            else:
+                self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
+                self.commit_to_ledger("Deferred", [l_task])
+                self.last_msg = f"Deferred to {res}"
+
+        self.task_start_time = None
+        self.initial_stack = copy.deepcopy(self.triage_stack)
+        return True
+
+    def _prepare_task_with_markers(self, task, main_marker, pending_sub_marker):
+        """Helper to create a copy of a task with updated markers for pending items."""
+        new_task = copy.deepcopy(task)
+        content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
+        new_task['line'] = f"{main_marker} {content}"
+        new_notes = []
+        for n in task['notes']:
+            m = re.match(r'^\[([x\->\s]?)\]\s*', n)
+            if m:
+                state = m.group(1).strip()
+                if not state: # pending
+                    sub_content = n[m.end():].strip()
+                    new_notes.append(f"{pending_sub_marker} {sub_content}")
+                else:
+                    new_notes.append(n) # keep [x], [-], etc.
+            else:
+                new_notes.append(n) # keep notes
+        new_task['notes'] = new_notes
+        return new_task
 
     def commit_to_ledger(self, mode_label, items, target_file=None):
         dest = target_file if target_file else FILENAME
@@ -410,7 +526,7 @@ class DeepWorkCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [i#] ignore, [w] work, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [i#] ignore, [>>] defer all, [w] work, [q] quit")
 
     def render_work(self):
         if not self.triage_stack:
@@ -450,7 +566,7 @@ class DeepWorkCLI:
             n_color = "\033[1;36m" if '[]' in n else ""
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [f#] focus, [n] add, [i] ignore, [t] triage, [q] quit")
+        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
@@ -543,6 +659,10 @@ class DeepWorkCLI:
                     src_str, dest_idx = parts[1], int(parts[2])
                     item = self.triage_stack[int(src_str.split('.')[0])]['notes'].pop(int(src_str.split('.')[1])) if '.' in src_str else self.triage_stack.pop(int(src_str))['line']
                     self.triage_stack[dest_idx]['notes'].append(item)
+
+                elif base_cmd in ['>', '>>']:
+                    if self._handle_defer_command(base_cmd, parts):
+                        return
 
             elif self.mode in ["WORK", "BREAK"]:
                 if not self.triage_stack:
@@ -643,20 +763,18 @@ class DeepWorkCLI:
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
 
-                if base_cmd in ['x', '-', '>', 'i']:
+                if base_cmd in ['x', '-', '>', '>>', 'i']:
                     if self.mode == "BREAK":
                         self.last_msg = "Command disabled during break."
                         return
+
+                    if base_cmd in ['>', '>>']:
+                        if self._handle_defer_command(base_cmd, parts):
+                            return
+
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
                     marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
                     task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
-
-                    if effective_cmd == '>':
-                        tomorrow = get_tomorrow_file()
-                        clean_task = copy.deepcopy(task)
-                        clean_task['line'] = f"[] {task_content}"
-                        clean_task['notes'] = [re.sub(r'^\[[x\->\s]?\]\s*', '', n) for n in clean_task['notes']]
-                        self.commit_to_ledger("Deferred from last session", [clean_task], target_file=tomorrow)
                     
                     task['line'] = f"{marker} {task_content}"
                     task['notes'] = [f"{marker} " + re.sub(r'^\[[x\->\s]?\]\s*', '', n) for n in task['notes']]

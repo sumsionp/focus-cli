@@ -164,7 +164,7 @@ class DeepWorkCLI:
                 if not clean or "-------" in clean or line.startswith('  '):
                     continue
 
-                marker_match = re.match(r'^\[([x\->\s]?)\]', clean)
+                marker_match = re.match(r'^\[([xe\->\s]?)\]', clean)
                 if marker_match:
                     state = marker_match.group(1)
                     content = clean[marker_match.end():].strip()
@@ -175,7 +175,7 @@ class DeepWorkCLI:
         return counts
 
     def load_context(self):
-        """Whole-file aware parser with resolution logic."""
+        """Whole-file aware parser with resolution logic. Resolutions are [x], [-], [>], and [e]."""
         if not os.path.exists(FILENAME):
             with open(FILENAME, 'w') as f: f.write(f"Session Start - {get_timestamp()}\n")
             self.triage_stack = []
@@ -205,7 +205,7 @@ class DeepWorkCLI:
             
             if not line.startswith('  '):
                 clean = line.strip()
-                marker_match = re.match(r'^\[([x\->\s]?)\]\s*', clean)
+                marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', clean)
                 if marker_match:
                     state = marker_match.group(1).strip()
                     content = clean[marker_match.end():].strip()
@@ -236,13 +236,13 @@ class DeepWorkCLI:
                     notes_list = active_entries[last_entry_content]['notes']
 
                     # Subtask/Note resolution logic
-                    sub_marker_match = re.match(r'^\[([x\->\s]?)\]\s*', note)
+                    sub_marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', note)
                     if sub_marker_match:
                         sub_content = note[sub_marker_match.end():].strip()
                         # Remove any existing instance of this subtask content
                         new_notes = []
                         for n in notes_list:
-                            m = re.match(r'^\[[x\->\s]?\]\s*', n)
+                            m = re.match(r'^\[[xe\->\s]?\]\s*', n)
                             if m and n[m.end():].strip() == sub_content:
                                 continue
                             new_notes.append(n)
@@ -381,11 +381,11 @@ class DeepWorkCLI:
     def _prepare_task_with_markers(self, task, main_marker, pending_sub_marker):
         """Helper to create a copy of a task with updated markers for pending items."""
         new_task = copy.deepcopy(task)
-        content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
+        content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
         new_task['line'] = f"{main_marker} {content}"
         new_notes = []
         for n in task['notes']:
-            m = re.match(r'^\[([x\->\s]?)\]\s*', n)
+            m = re.match(r'^\[([xe\->\s]?)\]\s*', n)
             if m:
                 state = m.group(1).strip()
                 if not state: # pending
@@ -470,7 +470,7 @@ class DeepWorkCLI:
                 if meeting_id not in self.chimed_meetings:
                     self.play_chime()
                     self.chimed_meetings.add(meeting_id)
-                    task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
+                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
                     self.last_msg = f"Meeting Starting: {task_content}"
 
                 if i > 0 and not found_active_meeting:
@@ -481,7 +481,7 @@ class DeepWorkCLI:
                     if not is_current_active_meeting:
                         self.triage_stack.insert(0, self.triage_stack.pop(i))
                         self.task_start_time = None
-                        task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', self.triage_stack[0]['line'])
+                        task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', self.triage_stack[0]['line'])
                         self.last_msg = f"Meeting Started: {task_content}"
                         found_active_meeting = True
 
@@ -534,7 +534,9 @@ class DeepWorkCLI:
             f_sign = "-" if focus_remaining < 0 else ""
             fm, fs = divmod(abs(focus_remaining), 60)
 
-            meeting_time = parse_meeting_time(self.triage_stack[0]['line'])
+            meeting_time = None
+            if self.triage_stack:
+                meeting_time = parse_meeting_time(self.triage_stack[0]['line'])
             meeting_timer_str = ""
             if meeting_time:
                 now_dt = datetime.now()
@@ -794,7 +796,7 @@ class DeepWorkCLI:
                 if not line.strip(): return
 
                 clean = line.strip()
-                clean = re.sub(r'^\[[x\->\s]?\]\s*', '', clean)
+                clean = re.sub(r'^\[[xe\->\s]?\]\s*', '', clean)
                 item = {'line': f"[] {clean}", 'notes': []}
 
                 self.commit_to_ledger("Prioritized Task", [item])
@@ -838,9 +840,9 @@ class DeepWorkCLI:
                         m_time = parse_meeting_time(t['line'])
                         if m_time and m_time[1] < now:
                             # Meeting already ended
-                            task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', t['line'])
+                            task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', t['line'])
                             t['line'] = f"[x] {task_content}"
-                            t['notes'] = [f"[x] " + re.sub(r'^\[[x\->\s]?\]\s*', '', n) for n in t['notes']]
+                            t['notes'] = [f"[x] " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in t['notes']]
                             self.commit_to_ledger("Meeting Auto-Completed", [t])
                             continue
                         new_stack.append(t)
@@ -865,14 +867,14 @@ class DeepWorkCLI:
                     item = self.triage_stack.pop(idx)
                     if item['line'].startswith('[]'):
                         # It's a task, mark as cancelled
-                        task_content = re.sub(r'^\[\s?\]\s*', '', item['line'])
+                        task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', item['line'])
                         item['line'] = f"[-] {task_content}"
                         new_notes = []
                         for n in item['notes']:
-                            if re.match(r'^\[[x>]\]', n):
+                            if re.match(r'^\[[xe>]\]', n):
                                 new_notes.append(n)
                             else:
-                                clean_note = re.sub(r'^\[[\s\-]?\]\s*', '', n)
+                                clean_note = re.sub(r'^\[[xe\->\s]?\]\s*', '', n)
                                 new_notes.append(f"[-] {clean_note}")
                         item['notes'] = new_notes
                         self.commit_to_ledger("Cancelled", [item])
@@ -1008,10 +1010,10 @@ class DeepWorkCLI:
 
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
                     marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
-                    task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
+                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
                     
                     task['line'] = f"{marker} {task_content}"
-                    task['notes'] = [f"{marker} " + re.sub(r'^\[[x\->\s]?\]\s*', '', n) for n in task['notes']]
+                    task['notes'] = [f"{marker} " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in task['notes']]
                     
                     self.commit_to_ledger("Work", [self.triage_stack.pop(0)])
                     self.task_start_time = None

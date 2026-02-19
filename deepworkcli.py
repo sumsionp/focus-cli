@@ -10,6 +10,7 @@ import termios
 import tty
 import subprocess
 import shlex
+import tempfile
 from datetime import datetime, timedelta
 
 # --- CONFIG ---
@@ -85,7 +86,7 @@ def parse_meeting_time(text):
     text = text.upper()
 
     # 1. Check for 2 PM 2h 15m format
-    m1 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)\s+(?:(\d+)H)?\s*(?:(\d+)M)?', text)
+    m1 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)\s*(?:(\d+)H)?\s*(?:(\d+)M)?', text)
     if m1 and (m1.group(3) or m1.group(4)):
         start_time_str = m1.group(1)
         ampm = m1.group(2)
@@ -322,7 +323,6 @@ class DeepWorkCLI:
         return True
 
     def _edit_item(self, item):
-        import tempfile
         original_item = copy.deepcopy(item)
 
         content = [item['line']]
@@ -462,6 +462,7 @@ class DeepWorkCLI:
         if not self.triage_stack: return
 
         now = datetime.now()
+        found_active_meeting = False
         for i, task in enumerate(self.triage_stack):
             m_time = parse_meeting_time(task['line'])
             if m_time and m_time[0] <= now < m_time[1]:
@@ -472,16 +473,20 @@ class DeepWorkCLI:
                     task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
                     self.last_msg = f"Meeting Starting: {task_content}"
 
-                    if i > 0:
-                        current_task = self.triage_stack[0]
-                        current_m_time = parse_meeting_time(current_task['line'])
-                        is_current_active_meeting = current_m_time and current_m_time[0] <= now < current_m_time[1]
+                if i > 0 and not found_active_meeting:
+                    current_task = self.triage_stack[0]
+                    current_m_time = parse_meeting_time(current_task['line'])
+                    is_current_active_meeting = current_m_time and current_m_time[0] <= now < current_m_time[1]
 
-                        if not is_current_active_meeting:
-                            self.triage_stack.insert(0, self.triage_stack.pop(i))
-                            self.task_start_time = None
-                            self.last_msg = f"Meeting Started: {task_content}"
-                return
+                    if not is_current_active_meeting:
+                        self.triage_stack.insert(0, self.triage_stack.pop(i))
+                        self.task_start_time = None
+                        task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', self.triage_stack[0]['line'])
+                        self.last_msg = f"Meeting Started: {task_content}"
+                        found_active_meeting = True
+
+                if i == 0:
+                    found_active_meeting = True
 
     def render_break(self):
         elapsed_break = time.time() - self.break_start_time
@@ -797,6 +802,8 @@ class DeepWorkCLI:
                 self.task_start_time = None
                 self.initial_stack = copy.deepcopy(self.triage_stack)
                 self.last_msg = "Task Added & Prioritized"
+                if self.mode == "WORK":
+                    self.check_meetings()
                 return
 
             if self.mode == "BREAK":

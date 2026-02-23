@@ -330,7 +330,7 @@ class DeepWorkCLI:
 
     def _get_multi_line_input(self):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
-            tf.write("# Enter one task or note per line\n")
+            tf.write("\n# Enter one task or note per line\n")
             temp_path = tf.name
 
         try:

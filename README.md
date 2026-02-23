@@ -54,22 +54,35 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 **Features:**
 - **Task Timer:** Tracks time spent on the current task.
 - **Focus Timer:** Countdown timer for the overall session.
+- **Mini Task Timer:** A repeating timer for rapid completion of small focus items.
 - **Auditory Feedback:** Chimes when timers expire.
 
 **Commands:**
-- `x`: **Done.** Marks the current task and all subtasks as complete `[x]`.
+- `x`: **Done.** Marks the current task and all subtasks as complete `[x]`. (Also resets the Mini Timer if active).
 - `x<idx>`: **Subtask Done.** Marks the subtask at `<idx>` as complete `[x]`.
 - `e`: **Edit.** Opens the current task and its sub-items in `vi` for editing.
 - `-`: **Cancel.** Marks the current task as cancelled `[-]`.
-- `>`: **Defer.** Marks the task as deferred `[>]` and appends it to a tomorrow-plan.txt file.
+- `>`: **Defer.** Marks the task as deferred `[>]` and appends it to a tomorrow-plan.txt file. (Also resets the Mini Timer if active).
 - `f <mins>` or `f`: **Focus.** Sets/Changes the Focus Timer duration.
+- `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
+- `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
 - `n`: **Add.** Adds a new top-level task/note or a sub-item (if input starts with a space).
 - `b <mins>`: **Break.** Enters Break Mode for specified minutes (default 5).
 - `i`: **Ignore.** Skips the current item (marks as cancelled if it's a task).
 - `t`: **Triage.** Returns to Triage Mode.
 - `q`: **Quit.** Exits to Free Write.
 
-### 4. Break Mode
+### 4. Mini Task Session
+This mode is designed for rapid-fire task completion (e.g., clearing an email inbox or reviewing case statuses).
+
+**Behavior:**
+- **Manual Reset:** Use the **Space Bar** to manually reset the timer for the next sub-task.
+- **Auto-Reset:** The timer automatically resets to full duration whenever you complete (`x`), cancel (`-`), defer (`>`), or prioritize (`N`) a task.
+- **Persistence:** Once started with `m`, the mode stays active as you move through multiple tasks.
+- **Exceeding Time:** If you exceed the allotted time, the timer will count negative values and play a "tick" sound immediately, and every 30 seconds thereafter, until you reset it.
+- **Auto-Pause:** The mini timer is automatically paused and hidden during scheduled meetings or breaks. Resuming work will automatically reset the mini timer to its full duration.
+
+### 5. Break Mode
 Entered via `b` in Work Mode. Displays inspirational quotes and a countdown.
 
 **Commands:**

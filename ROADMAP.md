@@ -1,6 +1,7 @@
 # Future Roadmap
 
 ## UI & Interaction
+- **Split-screen Task Editor** Explore the possibility of splitting the screen and only opening vi in the bottom part of the screen when adding or editing tasks and notes.
 - **Triage as a Task** Currently, time spent on Triage isn't recorded in the ledger. The idea is to record this Triage time in the ledger.
 - **Add Already Completed Task** Automatically complete top level notes that were entered prepended with '[x]'.
 - **Improved Subnote Formatting** Automatically add '- ' to the beginning of subnotes if it isn't already there to improve markdown formatting of subnotes.

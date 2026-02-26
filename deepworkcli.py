@@ -269,8 +269,11 @@ class DeepWorkCLI:
 
     def _prepare_defer_tasks(self, task, target_date):
         """Prepare tasks for ledger and target file without committing them."""
-        is_today = target_date.date() == datetime.now().date()
-        if is_today:
+        is_target_today = target_date.date() == datetime.now().date()
+        today_str = datetime.now().strftime(DATE_FORMAT)
+        is_current_file_today = today_str in FILENAME
+
+        if is_target_today and is_current_file_today:
             return task, None, "today"
         else:
             target_file = get_target_file(target_date)

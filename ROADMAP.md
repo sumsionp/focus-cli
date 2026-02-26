@@ -1,6 +1,7 @@
 # Future Roadmap
 
 ## UI & Interaction
+- **Triage as a Task** Currently, time spent on Triage isn't recorded in the ledger. The idea is to record this Triage time in the ledger.
 - **Add Already Completed Task** Automatically complete top level notes that were entered prepended with '[x]'.
 - **Improved Subnote Formatting** Automatically add '- ' to the beginning of subnotes if it isn't already there to improve markdown formatting of subnotes.
 - **Search** Implement '/' command to search for matching tasks in the triage stack. This is primarily for verifying whether the user has already entered a matching new task to avoid duplicates.

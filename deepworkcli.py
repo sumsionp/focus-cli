@@ -363,25 +363,6 @@ class DeepWorkCLI:
         # Check if all non-empty lines are indented
         only_indented = all(l.startswith(' ') for l in lines if l.strip())
 
-        if only_indented:
-            if self.mode in ["WORK", "BREAK"] and self.triage_stack:
-                # Add as sub-items to the active task
-                active_task = self.triage_stack[0]
-                added_any = False
-                for l in lines:
-                    if l.strip():
-                        # Remove only the first 2 spaces to preserve deeper nesting
-                        note = l[2:] if l.startswith('  ') else l.lstrip()
-                        active_task['notes'].append(note)
-                        added_any = True
-                return [], added_any
-            else:
-                # Treat as top-level items
-                for l in lines:
-                    if l.strip():
-                        items.append({'line': l.strip(), 'notes': []})
-                return items, False
-
         for l in lines:
             if not l.strip(): continue
             if not l.startswith(' '):
@@ -398,7 +379,7 @@ class DeepWorkCLI:
                     current_item = {'line': l.strip(), 'notes': []}
                     items.append(current_item)
 
-        return items, False
+        return items, only_indented
 
     def _edit_item(self, item):
         original_item = copy.deepcopy(item)
@@ -1054,53 +1035,59 @@ class DeepWorkCLI:
 
             if base_cmd == 'n' and self.mode in ["WORK", "BREAK", "TRIAGE"]:
                 lines = self._get_multi_line_input()
-                items, added_to_active = self._process_multi_line_input(lines)
+                items, only_indented = self._process_multi_line_input(lines)
 
-                if not items and not added_to_active:
+                if not items:
                     return
 
                 mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
 
-                if added_to_active:
-                    self.commit_to_ledger(mode_label, [self.triage_stack[0]])
-                    self.last_msg = "Sub-items Added"
-                else:
-                    self.commit_to_ledger(mode_label, items)
+                if self.mode in ["WORK", "BREAK"] and only_indented and self.triage_stack:
+                    # Hierarchical addition/prioritization
+                    top_task = self.triage_stack[0]
+                    if base_cmd_orig == 'N':
+                        _, _, focus_path = self._get_recursive_focus(top_task)
+                        if focus_path:
+                            self._recursive_prioritize(top_task, focus_path, items)
+                        else:
+                            # Focus is on the top task, insert at beginning of its notes
+                            new_lines = []
+                            for it in items:
+                                new_lines.append(it['line'])
+                                for n in it['notes']:
+                                    new_lines.append(f"  {n}")
+                            top_task['notes'] = new_lines + top_task['notes']
+                        self.last_msg = "Sub-item(s) Added & Prioritized"
+                        self.last_recorded_focus = None # Reset focus tracking
+                    else:
+                        for it in items:
+                            top_task['notes'].append(it['line'])
+                            for n in it['notes']:
+                                top_task['notes'].append(f"  {n}")
+                        self.last_msg = "Sub-item(s) Added"
 
-                    # Only add tasks to triage_stack
+                    self.commit_to_ledger(mode_label, [top_task])
+                else:
+                    # Top-level stack addition/prioritization
+                    self.commit_to_ledger(mode_label, items)
                     new_tasks = [it for it in items if it['line'].startswith('[]')]
 
                     if base_cmd_orig == 'N':
-                        if self.mode == "WORK" and self.triage_stack:
-                            top_task = self.triage_stack[0]
-                            _, _, focus_path = self._get_recursive_focus(top_task)
-                            if focus_path:
-                                self._recursive_prioritize(top_task, focus_path, new_tasks)
-                            else:
-                                for it in reversed(new_tasks):
-                                    self.triage_stack.insert(0, it)
-                        else:
-                            for it in reversed(new_tasks):
-                                self.triage_stack.insert(0, it)
-
-                        if new_tasks:
-                            self.last_msg = "Task(s) Added & Prioritized"
-                            self.task_start_time = None
-                        else:
-                            self.last_msg = "Note(s) Added"
-
-                        if self.mode == "WORK":
-                            if self.mini_timer_active:
-                                self.mini_timer_remaining = self.mini_timer_duration * 60
-                                self.mini_timer_last_tick = time.time()
-                                self.mini_timer_last_chime_timestamp = 0
-                            self.check_meetings()
+                        for it in reversed(new_tasks):
+                            self.triage_stack.insert(0, it)
+                        self.last_msg = "Task(s) Added & Prioritized" if new_tasks else "Note(s) Added"
+                        self.task_start_time = None
+                        self.last_recorded_focus = None
                     else:
                         self.triage_stack.extend(new_tasks)
-                        if new_tasks:
-                            self.last_msg = "Task(s) Added"
-                        else:
-                            self.last_msg = "Note(s) Added"
+                        self.last_msg = "Task(s) Added" if new_tasks else "Note(s) Added"
+
+                if base_cmd_orig == 'N' and self.mode == "WORK":
+                    if self.mini_timer_active:
+                        self.mini_timer_remaining = self.mini_timer_duration * 60
+                        self.mini_timer_last_tick = time.time()
+                        self.mini_timer_last_chime_timestamp = 0
+                    self.check_meetings()
 
                 self.initial_stack = copy.deepcopy(self.triage_stack)
                 return

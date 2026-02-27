@@ -157,8 +157,7 @@ class DeepWorkCLI:
         self.mini_timer_last_tick = 0
         self.mini_timer_last_chime_timestamp = 0
         self.mini_timer_was_meeting = False
-        self.subtask_mode = False
-        self.active_subtask_idx = -1
+        self.last_recorded_focus = None
 
     def get_daily_summary(self):
         counts = {'[x]': 0, '[-]': 0, '[>]': 0}
@@ -492,6 +491,61 @@ class DeepWorkCLI:
         parent_task['notes'][idx:end_idx] = new_lines
         return idx + len(new_lines)
 
+    def _get_recursive_focus(self, item):
+        """Recursively find the deepest pending task."""
+        for i, note in enumerate(item['notes']):
+            if note.strip().startswith('[]'):
+                sub_item, sub_end_idx = self._get_subtask_as_item(item, i)
+                deep_item, deep_parent, deep_path = self._get_recursive_focus(sub_item)
+
+                if deep_parent is None:
+                    # sub_item is the focus, item is its parent
+                    return deep_item, item, [i]
+                else:
+                    # Focus is even deeper
+                    return deep_item, deep_parent, [i] + deep_path
+
+        # No pending subtasks found
+        return item, None, []
+
+    def _update_recursive_item(self, top_item, path, new_sub_item):
+        """Update a sub-item in the hierarchy recursively."""
+        self._recursive_set(top_item, path, new_sub_item)
+
+    def _recursive_set(self, item, path, new_sub_item):
+        if not path:
+            item['line'] = new_sub_item['line']
+            item['notes'] = new_sub_item['notes']
+            return
+
+        idx = path[0]
+        sub_item, end_idx = self._get_subtask_as_item(item, idx)
+        self._recursive_set(sub_item, path[1:], new_sub_item)
+        self._update_subtask_from_item(item, idx, end_idx, sub_item)
+
+    def _recursive_prioritize(self, item, path, new_items):
+        if not path:
+            # Signal to parent to insert before this item
+            return True
+
+        idx = path[0]
+        sub_item, end_idx = self._get_subtask_as_item(item, idx)
+        should_insert_here = self._recursive_prioritize(sub_item, path[1:], new_items)
+
+        if should_insert_here:
+            # Insert new_items before the sub_item at idx
+            new_lines = []
+            for it in new_items:
+                new_lines.append(it['line'])
+                for n in it['notes']:
+                    new_lines.append(f"  {n}")
+            item['notes'][idx:idx] = new_lines
+        else:
+            # Sub-item was updated deeper down, update our record of it
+            self._update_subtask_from_item(item, idx, end_idx, sub_item)
+
+        return False
+
     def commit_to_ledger(self, mode_label, items, target_file=None):
         dest = target_file if target_file else FILENAME
         with open(dest, 'a') as f:
@@ -508,7 +562,13 @@ class DeepWorkCLI:
 
         now = time.time()
         is_active_meeting = self.is_meeting_active()
-        suppress_mini = is_active_meeting and not self.subtask_mode
+
+        focused_on_subtask = False
+        if self.triage_stack:
+            _, _, focus_path = self._get_recursive_focus(self.triage_stack[0])
+            focused_on_subtask = bool(focus_path)
+
+        suppress_mini = is_active_meeting and not focused_on_subtask
 
         # Reset if transitioning back from a meeting (if it was suppressed)
         if self.mini_timer_was_meeting and not suppress_mini:
@@ -691,7 +751,10 @@ class DeepWorkCLI:
             mini_timer_str = ""
             is_mini_session = False
             if self.mini_timer_active and self.triage_stack:
-                if not self.is_meeting_active() or self.subtask_mode:
+                # mini timer is visible if not in meeting OR if focused on a subtask
+                top_task = self.triage_stack[0]
+                _, _, focus_path = self._get_recursive_focus(top_task)
+                if not self.is_meeting_active() or focus_path:
                     is_mini_session = True
                     sign = "-" if self.mini_timer_remaining < 0 else ""
                     mm, ms = divmod(abs(self.mini_timer_remaining), 60)
@@ -764,15 +827,6 @@ class DeepWorkCLI:
                     is_expired != last_expired or
                     is_exceeded != last_exceeded
                 )
-
-                if current_task != last_task and self.mode == "WORK":
-                    # If the top-level task changed, we should probably exit subtask mode
-                    # to avoid weird state issues unless we explicitly want to stay in it.
-                    # Per requirements, top-level changes (like N or meeting preemption)
-                    # should likely reset subtask mode focus.
-                    if self.subtask_mode:
-                        self.subtask_mode = False
-                        self.active_subtask_idx = -1
 
                 if structural_change:
                     sys.stdout.write("\033[H\033[J")
@@ -897,7 +951,29 @@ class DeepWorkCLI:
         f_sign = "-" if focus_remaining < 0 else ""
         fm, fs = divmod(abs(focus_remaining), 60)
         
-        t = self.triage_stack[0]
+        top_task = self.triage_stack[0]
+        focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
+
+        # Handle "Task Started" ledger entry
+        focus_id = focus_item['line']
+        if focus_id != self.last_recorded_focus:
+            item_to_record = copy.deepcopy(focus_item)
+            # Remove subtasks from the starting record to match user example
+            item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
+
+            if parent_item:
+                parent_to_record = copy.deepcopy(parent_item)
+                # Keep only the current focused subtask (without its own notes yet) in the parent's notes
+                parent_to_record['notes'] = [focus_item['line']]
+                # Ensure the parent line itself has [] for ledger if it's a task
+                if not parent_to_record['line'].startswith('[]'):
+                    parent_to_record['line'] = f"[] {parent_to_record['line']}"
+                self.commit_to_ledger("Task Started", [parent_to_record])
+            else:
+                self.commit_to_ledger("Task Started", [item_to_record])
+            self.last_recorded_focus = focus_id
+
+        t = focus_item
         meeting_time = parse_meeting_time(t['line'])
         meeting_timer_str = ""
         if meeting_time:
@@ -910,7 +986,7 @@ class DeepWorkCLI:
         mini_timer_str = ""
         is_mini_session = False
         if self.mini_timer_active and self.triage_stack:
-            if not self.is_meeting_active() or self.subtask_mode:
+            if not self.is_meeting_active() or focus_path:
                 is_mini_session = True
                 sign = "-" if self.mini_timer_remaining < 0 else ""
                 mm, ms = divmod(abs(self.mini_timer_remaining), 60)
@@ -927,42 +1003,25 @@ class DeepWorkCLI:
         print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
         print(color + "="*65 + "\033[0m")
         
-        if self.subtask_mode and 0 <= self.active_subtask_idx < len(t['notes']):
-            parent_display = re.sub(r'^\[\s?\]\s*', '', t['line'])
-            print(f"\n\033[1;34mPARENT >> {parent_display}\033[0m")
-
+        if parent_item:
+            parent_display = re.sub(r'^\[\s?\]\s*', '', parent_item['line'])
+            print(f"\n\033[1;34mHEADER >> {parent_display}\033[0m")
             # Display parent's general notes (not subtasks)
-            for i, n in enumerate(t['notes']):
+            for n in parent_item['notes']:
                 if not re.match(r'^\[[xe\->\s]?\]', n):
-                    print(f"  {i}: {n}")
+                    print(f"  {n}")
 
-            subtask_line = t['notes'][self.active_subtask_idx]
-            sub_display = re.sub(r'^\[\s?\]\s*', '', subtask_line)
-            print(f"\n\033[1;32mFOCUS (Subtask) >> {sub_display}\033[0m")
-
-            # Display nested notes for this subtask
-            # They are lines following self.active_subtask_idx that are indented
-            for i in range(self.active_subtask_idx + 1, len(t['notes'])):
-                n = t['notes'][i]
-                if n.startswith('  '):
-                    n_color = "\033[1;36m" if '[]' in n else ""
-                    print(f"  {i}: {n_color}{n}\033[0m")
-                elif re.match(r'^\[[xe\->\s]?\]', n) or not n.startswith('  '):
-                    # Next subtask or a non-indented note (which should be ignored per req)
-                    break
+        display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
+        if is_task:
+            print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
         else:
-            display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
-            if is_task:
-                print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
-            else:
-                print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
-            for i, n in enumerate(t['notes']):
-                n_color = "\033[1;36m" if '[]' in n else ""
-                print(f"  {i}: {n_color}{n}\033[0m")
+            print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
+        for i, n in enumerate(t['notes']):
+            n_color = "\033[1;36m" if '[]' in n else ""
+            print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
         extra_cmds = ", [Space] reset" if is_mini_session else ""
-        sub_mode_cmd = ", [s] subtask mode" if not self.subtask_mode else ", [s] exit subtask mode"
-        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [m#] mini{extra_cmds}{sub_mode_cmd}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
+        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [m#] mini{extra_cmds}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
@@ -1012,8 +1071,18 @@ class DeepWorkCLI:
                     new_tasks = [it for it in items if it['line'].startswith('[]')]
 
                     if base_cmd_orig == 'N':
-                        for it in reversed(new_tasks):
-                            self.triage_stack.insert(0, it)
+                        if self.mode == "WORK" and self.triage_stack:
+                            top_task = self.triage_stack[0]
+                            _, _, focus_path = self._get_recursive_focus(top_task)
+                            if focus_path:
+                                self._recursive_prioritize(top_task, focus_path, new_tasks)
+                            else:
+                                for it in reversed(new_tasks):
+                                    self.triage_stack.insert(0, it)
+                        else:
+                            for it in reversed(new_tasks):
+                                self.triage_stack.insert(0, it)
+
                         if new_tasks:
                             self.last_msg = "Task(s) Added & Prioritized"
                             self.task_start_time = None
@@ -1085,8 +1154,6 @@ class DeepWorkCLI:
                     self.commit_to_ledger("Triage", items_to_write)
                     self.triage_stack = active
                     self.mode = "WORK"; self.last_msg = ""
-                    self.subtask_mode = False
-                    self.active_subtask_idx = -1
                     if self.mini_timer_active:
                         self.mini_timer_last_tick = time.time()
                     self.last_chime_timestamp = 0
@@ -1138,77 +1205,9 @@ class DeepWorkCLI:
                     if base_cmd != 'n':
                         return
 
-                task = self.triage_stack[0]
-                is_note = not task['line'].startswith('[]')
-
-                if self.subtask_mode and base_cmd in ['x', '-', 'i', '>', 'e']:
-                    is_indexed_x = (base_cmd == 'x' and (len(parts) > 1 or re.match(r'^x\d+', cmd)))
-                    if is_indexed_x:
-                        # Allow fall-through to match_x or other indexed logic
-                        pass
-                    else:
-                        if self.mode == "BREAK":
-                            self.last_msg = "Command disabled during break."
-                            return
-
-                        sub_idx = self.active_subtask_idx
-                    sub_item, sub_end_idx = self._get_subtask_as_item(task, sub_idx)
-
-                    if base_cmd == 'e':
-                        new_sub_item = self._edit_item(sub_item)
-                        if new_sub_item != sub_item:
-                            self._update_subtask_from_item(task, sub_idx, sub_end_idx, new_sub_item)
-                            self.initial_stack = copy.deepcopy(self.triage_stack)
-                        return
-
-                    # Resolve subtask
-                    effective_cmd = '-' if base_cmd == 'i' else base_cmd
-                    marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
-
-                    if base_cmd == '>':
-                        defer_date_str = " ".join(parts[1:])
-                        target_date = parse_defer_date(defer_date_str)
-                        if not target_date:
-                            self.last_msg = f"Invalid date: {defer_date_str}"
-                            return
-
-                        l_task, t_task, res = self._prepare_defer_tasks(sub_item, target_date)
-                        if res != "today":
-                            self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
-                            self.last_msg = f"Subtask deferred to {res}"
-                        else:
-                            # When deferring to today, we want it at the end of the stack as a pending task
-                            # l_task is already a copy from _prepare_defer_tasks (with the fix)
-                            self.triage_stack.append(l_task)
-                            self.last_msg = "Subtask deferred to end of today's stack"
-
-                    # Update memory (mark subtask as deferred in parent)
-                    sub_item['line'] = re.sub(r'^\[[xe\->\s]?\]', marker, sub_item['line'])
-                    sub_item['notes'] = [f"{marker} " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in sub_item['notes']]
-
-                    self._update_subtask_from_item(task, sub_idx, sub_end_idx, sub_item)
-                    self.commit_to_ledger("Work", [task])
-
-                    if self.mini_timer_active:
-                        self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = time.time()
-                        self.mini_timer_last_chime_timestamp = 0
-
-                    # Advance to next pending
-                    found_next = False
-                    for i in range(len(task['notes'])):
-                        if re.match(r'^\[\s?\]', task['notes'][i]):
-                            self.active_subtask_idx = i
-                            found_next = True
-                            break
-
-                    if not found_next:
-                        self.subtask_mode = False
-                        self.active_subtask_idx = -1
-                        self.last_msg = "All subtasks resolved. Returning to parent."
-
-                    self.initial_stack = copy.deepcopy(self.triage_stack)
-                    return
+                top_task = self.triage_stack[0]
+                focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
+                is_note = not focus_item['line'].startswith('[]')
 
                 if base_cmd == 'b' and self.mode == "WORK":
                     duration = 5
@@ -1250,8 +1249,10 @@ class DeepWorkCLI:
                     return
 
                 if base_cmd == 'e':
-                    self.triage_stack[0] = self._edit_item(self.triage_stack[0])
-                    self.initial_stack = copy.deepcopy(self.triage_stack)
+                    new_item = self._edit_item(focus_item)
+                    if new_item != focus_item:
+                        self._update_recursive_item(top_task, focus_path, new_item)
+                        self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
 
                 if base_cmd == 'm' and self.mode == "WORK":
@@ -1283,54 +1284,15 @@ class DeepWorkCLI:
                             self.last_msg = "Mini Timer Started: 2m"
                     return
 
-                if base_cmd == 's' and self.mode == "WORK":
-                    if self.subtask_mode:
-                        self.subtask_mode = False
-                        self.active_subtask_idx = -1
-                        self.last_msg = "Subtask Mode Off"
-                        return
-
-                    # Entering Subtask Mode
-                    has_subtasks = any(re.match(r'^\[\s?\]', n) for n in task['notes'])
-
-                    if not has_subtasks:
-                        lines = self._get_multi_line_input()
-                        added = False
-                        for l in lines:
-                            if l.strip():
-                                clean = l.strip()
-                                # If it doesn't start with a marker, add []
-                                if not re.match(r'^\[[xe\->\s]?\]', clean):
-                                    clean = f"[] {clean}"
-                                task['notes'].append(clean)
-                                added = True
-                        if added:
-                            self.commit_to_ledger("New Entry(s)", [task])
-                            self.last_msg = "Subtasks Added"
-                        else:
-                            return
-
-                    # Find first pending subtask
-                    for i, n in enumerate(task['notes']):
-                        if re.match(r'^\[\s?\]', n):
-                            self.active_subtask_idx = i
-                            self.subtask_mode = True
-                            self.last_msg = "Subtask Mode On"
-                            return
-
-                    self.last_msg = "No pending subtasks found"
-                    return
-
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:
                     if self.mode == "BREAK":
                         self.last_msg = "Command disabled during break."
                         return
                     idx = int(match_x.group(1))
-                    if 0 <= idx < len(task['notes']):
-                        task['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', task['notes'][idx])
-                        if self.subtask_mode:
-                            self.commit_to_ledger("Work", [task])
+                    if 0 <= idx < len(focus_item['notes']):
+                        focus_item['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', focus_item['notes'][idx])
+                        self._update_recursive_item(top_task, focus_path, focus_item)
                         if self.mini_timer_active:
                             self.mini_timer_remaining = self.mini_timer_duration * 60
                             self.mini_timer_last_tick = time.time()
@@ -1341,7 +1303,12 @@ class DeepWorkCLI:
                     if self.mode == "BREAK":
                         self.last_msg = "Command disabled during break."
                         return
-                    self.triage_stack.pop(0)
+                    # Notes are always top-level in triage_stack if they were returned as focus_item with empty path
+                    if not focus_path:
+                        self.triage_stack.pop(0)
+                    else:
+                        # This shouldn't happen with current recursive logic but let's be safe
+                        pass
                     self.task_start_time = None
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
@@ -1351,25 +1318,57 @@ class DeepWorkCLI:
                         self.last_msg = "Command disabled during break."
                         return
 
-                    if base_cmd in ['>', '>>']:
+                    if base_cmd == '>>' or (base_cmd == '>' and not focus_path):
                         if self._handle_defer_command(base_cmd, parts):
                             return
 
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
                     marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
-                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
+                    ledger_label = {'x': 'Task Completed', '-': 'Task Cancelled', '>': 'Task Deferred'}[effective_cmd]
+
+                    if base_cmd == '>':
+                        # Deferring a sub-task
+                        defer_date_str = " ".join(parts[1:])
+                        target_date = parse_defer_date(defer_date_str)
+                        if not target_date:
+                            self.last_msg = f"Invalid date: {defer_date_str}"
+                            return
+
+                        l_task, t_task, res = self._prepare_defer_tasks(focus_item, target_date)
+                        if res != "today":
+                            self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
+                            self.last_msg = f"Task deferred to {res}"
+                        else:
+                            self.triage_stack.append(l_task)
+                            self.last_msg = "Task deferred to end of today's stack"
+
+                    # Resolve item
+                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', focus_item['line'])
+                    focus_item['line'] = f"{marker} {task_content}"
+                    focus_item['notes'] = [f"{marker} " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in focus_item['notes']]
                     
-                    task['line'] = f"{marker} {task_content}"
-                    task['notes'] = [f"{marker} " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in task['notes']]
-                    
-                    self.commit_to_ledger("Work", [self.triage_stack.pop(0)])
+                    if not focus_path:
+                        self.commit_to_ledger(ledger_label, [self.triage_stack.pop(0)])
+                    else:
+                        self._update_recursive_item(top_task, focus_path, focus_item)
+                        # When a sub-item is resolved, record it and its parent
+                        item_to_record = copy.deepcopy(focus_item)
+                        if parent_item:
+                            parent_to_record = copy.deepcopy(parent_item)
+                            # Keep only the resolved subtask in parent notes
+                            parent_to_record['notes'] = [focus_item['line']]
+                            # Ensure parent is marked pending for context in the resolved entry too
+                            if not parent_to_record['line'].startswith('[]'):
+                                parent_to_record['line'] = f"[] {parent_to_record['line']}"
+                            self.commit_to_ledger(ledger_label, [parent_to_record])
+                        else:
+                            self.commit_to_ledger(ledger_label, [item_to_record])
+
                     if self.mini_timer_active:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
                         self.mini_timer_last_tick = time.time()
                         self.mini_timer_last_chime_timestamp = 0
                     self.task_start_time = None
-                    self.subtask_mode = False
-                    self.active_subtask_idx = -1
                     self.initial_stack = copy.deepcopy(self.triage_stack)
 
         except Exception as e:

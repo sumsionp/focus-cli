@@ -157,6 +157,8 @@ class DeepWorkCLI:
         self.mini_timer_last_tick = 0
         self.mini_timer_last_chime_timestamp = 0
         self.mini_timer_was_meeting = False
+        self.subtask_mode = False
+        self.active_subtask_idx = -1
 
     def get_daily_summary(self):
         counts = {'[x]': 0, '[-]': 0, '[>]': 0}
@@ -238,7 +240,8 @@ class DeepWorkCLI:
             else:
                 # Indented line
                 if last_entry_content and last_entry_content in active_entries:
-                    note = line.strip()
+                    # Remove only the first 2 spaces to preserve deeper nesting
+                    note = line[2:] if line.startswith('  ') else line.lstrip()
                     notes_list = active_entries[last_entry_content]['notes']
 
                     # Subtask/Note resolution logic
@@ -274,7 +277,7 @@ class DeepWorkCLI:
         is_current_file_today = today_str in FILENAME
 
         if is_target_today and is_current_file_today:
-            return task, None, "today"
+            return copy.deepcopy(task), None, "today"
         else:
             target_file = get_target_file(target_date)
             # Target version: main task [], subtasks preserve status
@@ -368,7 +371,9 @@ class DeepWorkCLI:
                 added_any = False
                 for l in lines:
                     if l.strip():
-                        active_task['notes'].append(l.strip())
+                        # Remove only the first 2 spaces to preserve deeper nesting
+                        note = l[2:] if l.startswith('  ') else l.lstrip()
+                        active_task['notes'].append(note)
                         added_any = True
                 return [], added_any
             else:
@@ -385,7 +390,9 @@ class DeepWorkCLI:
                 items.append(current_item)
             else:
                 if current_item:
-                    current_item['notes'].append(l.strip())
+                    # Remove only the first 2 spaces to preserve deeper nesting
+                    note = l[2:] if l.startswith('  ') else l.lstrip()
+                    current_item['notes'].append(note)
                 else:
                     # Indented line before any top-level item in this batch
                     # Treat as top-level
@@ -469,6 +476,21 @@ class DeepWorkCLI:
                 new_notes.append(n) # keep notes
         new_task['notes'] = new_notes
         return new_task
+
+    def _get_subtask_as_item(self, parent_task, idx):
+        subtask_line = parent_task['notes'][idx]
+        notes = []
+        i = idx + 1
+        while i < len(parent_task['notes']) and parent_task['notes'][i].startswith('  '):
+            # Remove the extra 2 spaces of indentation
+            notes.append(parent_task['notes'][i][2:])
+            i += 1
+        return {'line': subtask_line, 'notes': notes}, i
+
+    def _update_subtask_from_item(self, parent_task, idx, end_idx, item):
+        new_lines = [item['line']] + [f"  {n}" for n in item['notes']]
+        parent_task['notes'][idx:end_idx] = new_lines
+        return idx + len(new_lines)
 
     def commit_to_ledger(self, mode_label, items, target_file=None):
         dest = target_file if target_file else FILENAME
@@ -742,6 +764,15 @@ class DeepWorkCLI:
                     is_exceeded != last_exceeded
                 )
 
+                if current_task != last_task and self.mode == "WORK":
+                    # If the top-level task changed, we should probably exit subtask mode
+                    # to avoid weird state issues unless we explicitly want to stay in it.
+                    # Per requirements, top-level changes (like N or meeting preemption)
+                    # should likely reset subtask mode focus.
+                    if self.subtask_mode:
+                        self.subtask_mode = False
+                        self.active_subtask_idx = -1
+
                 if structural_change:
                     sys.stdout.write("\033[H\033[J")
                     if self.mode == "TRIAGE":
@@ -895,17 +926,42 @@ class DeepWorkCLI:
         print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
         print(color + "="*65 + "\033[0m")
         
-        display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
-        if is_task:
-            print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
+        if self.subtask_mode and 0 <= self.active_subtask_idx < len(t['notes']):
+            parent_display = re.sub(r'^\[\s?\]\s*', '', t['line'])
+            print(f"\n\033[1;34mPARENT >> {parent_display}\033[0m")
+
+            # Display parent's general notes (not subtasks)
+            for i, n in enumerate(t['notes']):
+                if not re.match(r'^\[[xe\->\s]?\]', n):
+                    print(f"  {i}: {n}")
+
+            subtask_line = t['notes'][self.active_subtask_idx]
+            sub_display = re.sub(r'^\[\s?\]\s*', '', subtask_line)
+            print(f"\n\033[1;32mFOCUS (Subtask) >> {sub_display}\033[0m")
+
+            # Display nested notes for this subtask
+            # They are lines following self.active_subtask_idx that are indented
+            for i in range(self.active_subtask_idx + 1, len(t['notes'])):
+                n = t['notes'][i]
+                if n.startswith('  '):
+                    n_color = "\033[1;36m" if '[]' in n else ""
+                    print(f"  {i}: {n_color}{n}\033[0m")
+                elif re.match(r'^\[[xe\->\s]?\]', n) or not n.startswith('  '):
+                    # Next subtask or a non-indented note (which should be ignored per req)
+                    break
         else:
-            print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
-        for i, n in enumerate(t['notes']):
-            n_color = "\033[1;36m" if '[]' in n else ""
-            print(f"  {i}: {n_color}{n}\033[0m")
+            display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
+            if is_task:
+                print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
+            else:
+                print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
+            for i, n in enumerate(t['notes']):
+                n_color = "\033[1;36m" if '[]' in n else ""
+                print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
         extra_cmds = ", [Space] reset" if is_mini_session else ""
-        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [m#] mini{extra_cmds}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
+        sub_mode_cmd = ", [s] subtask mode" if not self.subtask_mode else ", [s] exit subtask mode"
+        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [m#] mini{extra_cmds}{sub_mode_cmd}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
@@ -1028,6 +1084,8 @@ class DeepWorkCLI:
                     self.commit_to_ledger("Triage", items_to_write)
                     self.triage_stack = active
                     self.mode = "WORK"; self.last_msg = ""
+                    self.subtask_mode = False
+                    self.active_subtask_idx = -1
                     if self.mini_timer_active:
                         self.mini_timer_last_tick = time.time()
                     self.last_chime_timestamp = 0
@@ -1081,6 +1139,75 @@ class DeepWorkCLI:
 
                 task = self.triage_stack[0]
                 is_note = not task['line'].startswith('[]')
+
+                if self.subtask_mode and base_cmd in ['x', '-', 'i', '>', 'e']:
+                    is_indexed_x = (base_cmd == 'x' and (len(parts) > 1 or re.match(r'^x\d+', cmd)))
+                    if is_indexed_x:
+                        # Allow fall-through to match_x or other indexed logic
+                        pass
+                    else:
+                        if self.mode == "BREAK":
+                            self.last_msg = "Command disabled during break."
+                            return
+
+                        sub_idx = self.active_subtask_idx
+                    sub_item, sub_end_idx = self._get_subtask_as_item(task, sub_idx)
+
+                    if base_cmd == 'e':
+                        new_sub_item = self._edit_item(sub_item)
+                        if new_sub_item != sub_item:
+                            self._update_subtask_from_item(task, sub_idx, sub_end_idx, new_sub_item)
+                            self.initial_stack = copy.deepcopy(self.triage_stack)
+                        return
+
+                    # Resolve subtask
+                    effective_cmd = '-' if base_cmd == 'i' else base_cmd
+                    marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
+
+                    if base_cmd == '>':
+                        defer_date_str = " ".join(parts[1:])
+                        target_date = parse_defer_date(defer_date_str)
+                        if not target_date:
+                            self.last_msg = f"Invalid date: {defer_date_str}"
+                            return
+
+                        l_task, t_task, res = self._prepare_defer_tasks(sub_item, target_date)
+                        if res != "today":
+                            self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
+                            self.last_msg = f"Subtask deferred to {res}"
+                        else:
+                            # When deferring to today, we want it at the end of the stack as a pending task
+                            # l_task is already a copy from _prepare_defer_tasks (with the fix)
+                            self.triage_stack.append(l_task)
+                            self.last_msg = "Subtask deferred to end of today's stack"
+
+                    # Update memory (mark subtask as deferred in parent)
+                    sub_item['line'] = re.sub(r'^\[[xe\->\s]?\]', marker, sub_item['line'])
+                    sub_item['notes'] = [f"{marker} " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in sub_item['notes']]
+
+                    self._update_subtask_from_item(task, sub_idx, sub_end_idx, sub_item)
+                    self.commit_to_ledger("Work", [task])
+
+                    if self.mini_timer_active:
+                        self.mini_timer_remaining = self.mini_timer_duration * 60
+                        self.mini_timer_last_tick = time.time()
+                        self.mini_timer_last_chime_timestamp = 0
+
+                    # Advance to next pending
+                    found_next = False
+                    for i in range(len(task['notes'])):
+                        if re.match(r'^\[\s?\]', task['notes'][i]):
+                            self.active_subtask_idx = i
+                            found_next = True
+                            break
+
+                    if not found_next:
+                        self.subtask_mode = False
+                        self.active_subtask_idx = -1
+                        self.last_msg = "All subtasks resolved. Returning to parent."
+
+                    self.initial_stack = copy.deepcopy(self.triage_stack)
+                    return
 
                 if base_cmd == 'b' and self.mode == "WORK":
                     duration = 5
@@ -1155,6 +1282,43 @@ class DeepWorkCLI:
                             self.last_msg = "Mini Timer Started: 2m"
                     return
 
+                if base_cmd == 's' and self.mode == "WORK":
+                    if self.subtask_mode:
+                        self.subtask_mode = False
+                        self.active_subtask_idx = -1
+                        self.last_msg = "Subtask Mode Off"
+                        return
+
+                    # Entering Subtask Mode
+                    has_subtasks = any(re.match(r'^\[\s?\]', n) for n in task['notes'])
+
+                    if not has_subtasks:
+                        lines = self._get_multi_line_input()
+                        added = False
+                        for l in lines:
+                            if l.strip():
+                                clean = l.strip()
+                                # If it doesn't start with a marker, add []
+                                if not re.match(r'^\[[xe\->\s]?\]', clean):
+                                    clean = f"[] {clean}"
+                                task['notes'].append(clean)
+                                added = True
+                        if added:
+                            self.commit_to_ledger("New Entry(s)", [task])
+                            self.last_msg = "Subtasks Added"
+                        else:
+                            return
+
+                    # Find first pending subtask
+                    for i, n in enumerate(task['notes']):
+                        if re.match(r'^\[\s?\]', n):
+                            self.active_subtask_idx = i
+                            self.subtask_mode = True
+                            self.last_msg = "Subtask Mode On"
+                            return
+
+                    self.last_msg = "No pending subtasks found"
+                    return
 
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:
@@ -1162,11 +1326,14 @@ class DeepWorkCLI:
                         self.last_msg = "Command disabled during break."
                         return
                     idx = int(match_x.group(1))
-                    task['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', task['notes'][idx])
-                    if self.mini_timer_active:
-                        self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = time.time()
-                        self.mini_timer_last_chime_timestamp = 0
+                    if 0 <= idx < len(task['notes']):
+                        task['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', task['notes'][idx])
+                        if self.subtask_mode:
+                            self.commit_to_ledger("Work", [task])
+                        if self.mini_timer_active:
+                            self.mini_timer_remaining = self.mini_timer_duration * 60
+                            self.mini_timer_last_tick = time.time()
+                            self.mini_timer_last_chime_timestamp = 0
                     return
 
                 if is_note and base_cmd in ['x', '-', 'i']:
@@ -1200,6 +1367,8 @@ class DeepWorkCLI:
                         self.mini_timer_last_tick = time.time()
                         self.mini_timer_last_chime_timestamp = 0
                     self.task_start_time = None
+                    self.subtask_mode = False
+                    self.active_subtask_idx = -1
                     self.initial_stack = copy.deepcopy(self.triage_stack)
 
         except Exception as e:

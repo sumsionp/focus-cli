@@ -9,6 +9,7 @@
 - **Rename Work Mode to Focus Mode:** Update terminology throughout the app and documentation to use "Focus" instead of "Work".
 - **Selector-based Navigation:** Implement `j/k` for navigation and `CTRL+hjkl` for reordering/indenting in Triage mode, replacing or supplementing the current numbered command system.
 - **Deadline Timer:** Countdown in the Work Mode header for tasks with specific time-of-day deadlines.
+- **Automatic Sub-sub-task focus:** Enhance Subtask Mode to automatically transition into focusing on sub-sub-tasks as individual items, including hierarchical ledger recording.
 
 ## Ledger Improvements
 - **Action-Specific Markers:** Transition from generic markers (like `------- Work -------`) to more specific ones like `------- Completed -------` or `------- Deferred -------` to improve ledger auditability.
@@ -27,3 +28,4 @@
 - **Meeting Support:** Time-aware tasks with auto-preemption and meeting timer.
 - **Task Editing ('e'):** Drop to `vi` from Triage or Work mode to edit items.
 - **Mini Task Session (m#):** Implement a manual-reset repeating timer for rapid completion of small focus items.
+- **Subtask Mode ('s'):** Focused mode for completing sub-items of a larger parent task one at a time.

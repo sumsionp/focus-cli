@@ -566,6 +566,9 @@ class DeepWorkCLI:
                 self.last_msg = "Sub-item(s) Added"
 
             self.commit_to_ledger(mode_label, [top_task])
+            # Update focus tracking to avoid redundant "Task Started" log
+            new_focus, _, _ = self._get_recursive_focus(top_task)
+            self.last_recorded_focus = new_focus['line']
             return True
 
         elif self.mode == "TRIAGE":
@@ -1144,7 +1147,12 @@ class DeepWorkCLI:
                             self.triage_stack.insert(0, it)
                         self.last_msg = "Task(s) Added & Prioritized" if new_tasks else "Note(s) Added"
                         self.task_start_time = None
-                        self.last_recorded_focus = None
+                        if new_tasks:
+                            # Update focus tracking to the newly prioritized task
+                            new_focus, _, _ = self._get_recursive_focus(new_tasks[0])
+                            self.last_recorded_focus = new_focus['line']
+                        else:
+                            self.last_recorded_focus = None
                     else:
                         self.triage_stack.extend(new_tasks)
                         self.last_msg = "Task(s) Added" if new_tasks else "Note(s) Added"

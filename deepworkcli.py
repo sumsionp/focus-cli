@@ -337,6 +337,8 @@ class DeepWorkCLI:
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
             # Start with a blank line for typing
             tf.write("\n")
+            # Pad with some space so comments are clearly at the bottom
+            tf.write("\n\n")
             # Comments at the bottom for visual alignment
             tf.write("# Enter one task or note per line\n")
             if context_lines:
@@ -1092,7 +1094,7 @@ class DeepWorkCLI:
         
         if parent_item:
             parent_display = re.sub(r'^\[\s?\]\s*', '', parent_item['line'])
-            print(f"\n\033[1;34mPARENT TASK >> {parent_display}\033[0m")
+            print(f"\n\033[1;34mPARENT TASK >>\n{parent_display}\033[0m")
 
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
         if is_task:

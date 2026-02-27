@@ -357,11 +357,15 @@ class DeepWorkCLI:
         if not lines:
             return [], False
 
-        items = []
-        current_item = None
-
         # Check if all non-empty lines are indented
         only_indented = all(l.startswith(' ') for l in lines if l.strip())
+
+        if only_indented:
+            # Strip the base 2-space indentation to normalize the block
+            lines = [l[2:] if l.startswith('  ') else (l[1:] if l.startswith(' ') else l) for l in lines]
+
+        items = []
+        current_item = None
 
         for l in lines:
             if not l.strip(): continue
@@ -374,8 +378,7 @@ class DeepWorkCLI:
                     note = l[2:] if l.startswith('  ') else l.lstrip()
                     current_item['notes'].append(note)
                 else:
-                    # Indented line before any top-level item in this batch
-                    # Treat as top-level
+                    # Treating as top-level if no parent exists yet in this batch
                     current_item = {'line': l.strip(), 'notes': []}
                     items.append(current_item)
 
@@ -506,7 +509,17 @@ class DeepWorkCLI:
     def _recursive_insert(self, item, path, new_items, position='before'):
         """Recursively insert items into the hierarchy relative to the focus path."""
         if not path:
-            return True # Signal to parent to insert relative to this item
+            if position == 'before':
+                return True # Signal to parent to insert before this item
+            else:
+                # Appending after focus item's own content (notes)
+                new_lines = []
+                for it in new_items:
+                    new_lines.append(it['line'])
+                    for n in it['notes']:
+                        new_lines.append(f"  {n}")
+                item['notes'].extend(new_lines)
+                return False
 
         idx = path[0]
         sub_item, end_idx = self._get_subtask_as_item(item, idx)
@@ -527,6 +540,54 @@ class DeepWorkCLI:
         else:
             # Sub-item was updated deeper down, update our record of it
             self._update_subtask_from_item(item, idx, end_idx, sub_item)
+
+        return False
+
+    def _handle_hierarchical_new_items(self, base_cmd_orig, items, only_indented):
+        if not self.triage_stack:
+            return False
+
+        if not only_indented:
+            return False
+
+        mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
+
+        if self.mode in ["WORK", "BREAK"]:
+            top_task = self.triage_stack[0]
+            _, _, focus_path = self._get_recursive_focus(top_task)
+
+            if base_cmd_orig == 'N':
+                self._recursive_insert(top_task, focus_path, items, position='before')
+                self.last_msg = "Sub-item(s) Added & Prioritized"
+                self.last_recorded_focus = None
+                self.task_start_time = None
+            else:
+                self._recursive_insert(top_task, focus_path, items, position='after')
+                self.last_msg = "Sub-item(s) Added"
+
+            self.commit_to_ledger(mode_label, [top_task])
+            return True
+
+        elif self.mode == "TRIAGE":
+            if base_cmd_orig == 'N':
+                target = self.triage_stack[0]
+                new_lines = []
+                for it in items:
+                    new_lines.append(it['line'])
+                    for n in it['notes']:
+                        new_lines.append(f"  {n}")
+                target['notes'] = new_lines + target['notes']
+                self.last_msg = "Sub-item(s) Prioritized"
+            else:
+                target = self.triage_stack[-1]
+                for it in items:
+                    target['notes'].append(it['line'])
+                    for n in it['notes']:
+                        target['notes'].append(f"  {n}")
+                self.last_msg = "Sub-item(s) Added"
+
+            self.commit_to_ledger(mode_label, [target])
+            return True
 
         return False
 
@@ -1072,43 +1133,11 @@ class DeepWorkCLI:
                 if not items:
                     return
 
-                mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
-
-                if self.mode in ["WORK", "BREAK"] and only_indented and self.triage_stack:
-                    # Hierarchical addition/prioritization
-                    top_task = self.triage_stack[0]
-                    _, _, focus_path = self._get_recursive_focus(top_task)
-
-                    if base_cmd_orig == 'N':
-                        if focus_path:
-                            self._recursive_insert(top_task, focus_path, items, position='before')
-                        else:
-                            # Focus is on the top task, insert at beginning of its notes
-                            new_lines = []
-                            for it in items:
-                                new_lines.append(it['line'])
-                                for n in it['notes']:
-                                    new_lines.append(f"  {n}")
-                            top_task['notes'] = new_lines + top_task['notes']
-                        self.last_msg = "Sub-item(s) Added & Prioritized"
-                        self.last_recorded_focus = None # Reset focus tracking
-                        self.task_start_time = None
-                    else:
-                        if focus_path:
-                            self._recursive_insert(top_task, focus_path, items, position='after')
-                        else:
-                            # Focus is on the top task, append to end of its notes
-                            for it in items:
-                                top_task['notes'].append(it['line'])
-                                for n in it['notes']:
-                                    top_task['notes'].append(f"  {n}")
-                        self.last_msg = "Sub-item(s) Added"
-
-                    self.commit_to_ledger(mode_label, [top_task])
-                else:
+                if not self._handle_hierarchical_new_items(base_cmd_orig, items, only_indented):
                     # Top-level stack addition/prioritization
+                    mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
                     self.commit_to_ledger(mode_label, items)
-                    new_tasks = [it for it in items if it['line'].startswith('[]')]
+                    new_tasks = [it for it in items if it['line'].strip().startswith('[]')]
 
                     if base_cmd_orig == 'N':
                         for it in reversed(new_tasks):

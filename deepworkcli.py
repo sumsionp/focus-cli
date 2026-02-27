@@ -991,10 +991,6 @@ class DeepWorkCLI:
         if parent_item:
             parent_display = re.sub(r'^\[\s?\]\s*', '', parent_item['line'])
             print(f"\n\033[1;34mHEADER >> {parent_display}\033[0m")
-            # Display parent's general notes (not subtasks)
-            for n in parent_item['notes']:
-                if not re.match(r'^\[[xe\->\s]?\]', n):
-                    print(f"  {n}")
 
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
         if is_task:

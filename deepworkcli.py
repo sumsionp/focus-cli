@@ -335,10 +335,13 @@ class DeepWorkCLI:
 
     def _get_multi_line_input(self, context_lines=None):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
-            tf.write("\n# Enter one task or note per line\n")
+            # Start with a blank line for typing
+            tf.write("\n")
+            # Comments at the bottom for visual alignment
+            tf.write("# Enter one task or note per line\n")
             if context_lines:
                 for cl in context_lines:
-                    tf.write(f"# {cl}\n")
+                    tf.write(f"#{cl}\n")
             temp_path = tf.name
 
         try:
@@ -570,7 +573,7 @@ class DeepWorkCLI:
 
             self.commit_to_ledger(mode_label, [top_task])
             # Update focus tracking to avoid redundant "Task Started" log
-            self.last_recorded_focus = top_task['line']
+            self.last_recorded_focus = top_task['line'].strip()
             return True
 
         elif self.mode == "TRIAGE":
@@ -1035,8 +1038,9 @@ class DeepWorkCLI:
         focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
 
         # Handle "Task Started" ledger entry
-        focus_id = top_task['line']
-        if focus_id != self.last_recorded_focus:
+        # We only log "Task Started" when the root task changes.
+        root_id = top_task['line'].strip()
+        if root_id != self.last_recorded_focus:
             if not focus_path:
                 item_to_record = copy.deepcopy(focus_item)
                 item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
@@ -1048,13 +1052,13 @@ class DeepWorkCLI:
 
                 hierarchical_context = self._get_path_pruned_item(top_task, focus_path, item_to_record)
                 # Ensure root of this context is marked pending
-                if not hierarchical_context['line'].startswith('[]'):
+                if not hierarchical_context['line'].strip().startswith('[]'):
                      hierarchical_context['line'] = re.sub(r'^(\s*)\[([xe\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
                      if not hierarchical_context['line'].strip().startswith('[]'):
                          hierarchical_context['line'] = f"[] {hierarchical_context['line'].lstrip()}"
 
                 self.commit_to_ledger("Task Started", [hierarchical_context])
-            self.last_recorded_focus = focus_id
+            self.last_recorded_focus = root_id
 
         t = focus_item
         meeting_time = parse_meeting_time(t['line'])
@@ -1137,15 +1141,18 @@ class DeepWorkCLI:
                     top_task = self.triage_stack[0]
                     focus_item, _, focus_path = self._get_recursive_focus(top_task)
 
-                    # Build hierarchical context lines
+                    # Building hierarchical context string (just the focused item)
                     context = []
-                    context.append(top_task['line'])
-                    curr = top_task
-                    for i, idx in enumerate(focus_path):
-                        sub, _ = self._get_subtask_as_item(curr, idx)
-                        indent = "  " * (i + 1)
-                        context.append(f"{indent}{sub['line']}")
-                        curr = sub
+                    if focus_path:
+                        # Find the indentation of the focus item
+                        indent = ""
+                        curr = top_task
+                        for idx in focus_path:
+                            sub, _ = self._get_subtask_as_item(curr, idx)
+                            # Every subtask is 2 spaces deeper than its parent line
+                            indent += "  "
+                            curr = sub
+                        context.append(f"{indent}{focus_item['line']}")
 
                 lines = self._get_multi_line_input(context_lines=context)
                 items, only_indented = self._process_multi_line_input(lines)
@@ -1166,7 +1173,7 @@ class DeepWorkCLI:
                         self.task_start_time = None
                         if new_tasks:
                             # Update focus tracking to the newly prioritized task
-                            self.last_recorded_focus = self.triage_stack[0]['line']
+                            self.last_recorded_focus = self.triage_stack[0]['line'].strip()
                         else:
                             self.last_recorded_focus = None
                     else:

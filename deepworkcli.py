@@ -504,23 +504,27 @@ class DeepWorkCLI:
         self._recursive_set(sub_item, path[1:], new_sub_item)
         self._update_subtask_from_item(item, idx, end_idx, sub_item)
 
-    def _recursive_prioritize(self, item, path, new_items):
+    def _recursive_insert(self, item, path, new_items, position='before'):
+        """Recursively insert items into the hierarchy relative to the focus path."""
         if not path:
-            # Signal to parent to insert before this item
-            return True
+            return True # Signal to parent to insert relative to this item
 
         idx = path[0]
         sub_item, end_idx = self._get_subtask_as_item(item, idx)
-        should_insert_here = self._recursive_prioritize(sub_item, path[1:], new_items)
+        should_insert_here = self._recursive_insert(sub_item, path[1:], new_items, position)
 
         if should_insert_here:
-            # Insert new_items before the sub_item at idx
             new_lines = []
             for it in new_items:
                 new_lines.append(it['line'])
                 for n in it['notes']:
                     new_lines.append(f"  {n}")
-            item['notes'][idx:idx] = new_lines
+
+            if position == 'before':
+                item['notes'][idx:idx] = new_lines
+            else:
+                # Insert after the sub-item AND its notes
+                item['notes'][end_idx:end_idx] = new_lines
         else:
             # Sub-item was updated deeper down, update our record of it
             self._update_subtask_from_item(item, idx, end_idx, sub_item)
@@ -1045,10 +1049,11 @@ class DeepWorkCLI:
                 if self.mode in ["WORK", "BREAK"] and only_indented and self.triage_stack:
                     # Hierarchical addition/prioritization
                     top_task = self.triage_stack[0]
+                    _, _, focus_path = self._get_recursive_focus(top_task)
+
                     if base_cmd_orig == 'N':
-                        _, _, focus_path = self._get_recursive_focus(top_task)
                         if focus_path:
-                            self._recursive_prioritize(top_task, focus_path, items)
+                            self._recursive_insert(top_task, focus_path, items, position='before')
                         else:
                             # Focus is on the top task, insert at beginning of its notes
                             new_lines = []
@@ -1059,11 +1064,16 @@ class DeepWorkCLI:
                             top_task['notes'] = new_lines + top_task['notes']
                         self.last_msg = "Sub-item(s) Added & Prioritized"
                         self.last_recorded_focus = None # Reset focus tracking
+                        self.task_start_time = None
                     else:
-                        for it in items:
-                            top_task['notes'].append(it['line'])
-                            for n in it['notes']:
-                                top_task['notes'].append(f"  {n}")
+                        if focus_path:
+                            self._recursive_insert(top_task, focus_path, items, position='after')
+                        else:
+                            # Focus is on the top task, append to end of its notes
+                            for it in items:
+                                top_task['notes'].append(it['line'])
+                                for n in it['notes']:
+                                    top_task['notes'].append(f"  {n}")
                         self.last_msg = "Sub-item(s) Added"
 
                     self.commit_to_ledger(mode_label, [top_task])

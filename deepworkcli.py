@@ -440,21 +440,20 @@ class DeepWorkCLI:
     def _prepare_task_with_markers(self, task, main_marker, pending_sub_marker):
         """Helper to create a copy of a task with updated markers for pending items."""
         new_task = copy.deepcopy(task)
-        content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
-        new_task['line'] = f"{main_marker} {content}"
-        new_notes = []
-        for n in task['notes']:
-            m = re.match(r'^\[([xe\->\s]?)\]\s*', n)
+
+        # Helper to process a single line
+        def process_line(line, marker):
+            m = re.match(r'^(\s*)\[([xe\->\s]?)\]\s*', line)
             if m:
-                state = m.group(1).strip()
-                if not state: # pending
-                    sub_content = n[m.end():].strip()
-                    new_notes.append(f"{pending_sub_marker} {sub_content}")
-                else:
-                    new_notes.append(n) # keep [x], [-], etc.
-            else:
-                new_notes.append(n) # keep notes
-        new_task['notes'] = new_notes
+                indent = m.group(1)
+                state = m.group(2).strip()
+                if not state: # only change if pending
+                    content = line[m.end():].strip()
+                    return f"{indent}{marker} {content}"
+            return line
+
+        new_task['line'] = process_line(task['line'], main_marker)
+        new_task['notes'] = [process_line(n, pending_sub_marker) for n in task['notes']]
         return new_task
 
     def _get_subtask_as_item(self, parent_task, idx):
@@ -1161,19 +1160,10 @@ class DeepWorkCLI:
                         idx = int(parts[1])
 
                     item = self.triage_stack.pop(idx)
-                    if item['line'].startswith('[]'):
+                    if item['line'].strip().startswith('[]'):
                         # It's a task, mark as cancelled
-                        task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', item['line'])
-                        item['line'] = f"[-] {task_content}"
-                        new_notes = []
-                        for n in item['notes']:
-                            if re.match(r'^\[[xe>]\]', n):
-                                new_notes.append(n)
-                            else:
-                                clean_note = re.sub(r'^\[[xe\->\s]?\]\s*', '', n)
-                                new_notes.append(f"[-] {clean_note}")
-                        item['notes'] = new_notes
-                        self.commit_to_ledger("Cancelled", [item])
+                        resolved_item = self._prepare_task_with_markers(item, '[-]', '[-]')
+                        self.commit_to_ledger("Cancelled", [resolved_item])
                 elif base_cmd == 'p':
                     src, dest = int(parts[1]), int(parts[2]) if len(parts) > 2 else 0
                     self.triage_stack.insert(dest, self.triage_stack.pop(src))
@@ -1336,26 +1326,23 @@ class DeepWorkCLI:
                             self.last_msg = "Task deferred to end of today's stack"
 
                     # Resolve item
-                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', focus_item['line'])
-                    focus_item['line'] = f"{marker} {task_content}"
-                    focus_item['notes'] = [f"{marker} " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in focus_item['notes']]
+                    resolved_item = self._prepare_task_with_markers(focus_item, marker, marker)
                     
                     if not focus_path:
                         self.commit_to_ledger(ledger_label, [self.triage_stack.pop(0)])
                     else:
-                        self._update_recursive_item(top_task, focus_path, focus_item)
+                        self._update_recursive_item(top_task, focus_path, resolved_item)
                         # When a sub-item is resolved, record it and its parent
-                        item_to_record = copy.deepcopy(focus_item)
                         if parent_item:
                             parent_to_record = copy.deepcopy(parent_item)
                             # Keep only the resolved subtask in parent notes
-                            parent_to_record['notes'] = [focus_item['line']]
+                            parent_to_record['notes'] = [resolved_item['line']]
                             # Ensure parent is marked pending for context in the resolved entry too
                             if not parent_to_record['line'].startswith('[]'):
                                 parent_to_record['line'] = f"[] {parent_to_record['line']}"
                             self.commit_to_ledger(ledger_label, [parent_to_record])
                         else:
-                            self.commit_to_ledger(ledger_label, [item_to_record])
+                            self.commit_to_ledger(ledger_label, [resolved_item])
 
                     if self.mini_timer_active:
                         self.mini_timer_remaining = self.mini_timer_duration * 60

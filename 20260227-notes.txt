@@ -2,3 +2,16 @@
 ------- Task Started 02/27/2026 07:43:09 PM -------
 [] Parent Task
   [] Subtask 1
+
+------- New Entry(s) 02/27/2026 08:11:59 PM -------
+[] Meeting 07 PM-09 PM
+  [x] Subtask 1
+    Note A
+  [] Subtask 2
+    [] Sub-sub 2.1
+
+------- Task Deferred 02/27/2026 08:11:59 PM -------
+[] Meeting 07 PM-09 PM
+    Note A
+  [] Subtask 2
+    [>] Sub-sub 2.1

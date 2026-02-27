@@ -54,22 +54,23 @@ Entered by running the script with a filename. It parses the end of the file (af
 Entered by typing `w` from Triage Mode. It displays the top task along with its associated notes and subtasks.
 
 **Features:**
+- **Automatic Hierarchical Focus:** The system automatically drills down into the deepest pending subtask (`[]`). It presents the immediate parent as a header (`PARENT TASK >>`) and the sub-item as the active focus (`FOCUS >>`).
 - **Task Timer:** Tracks time spent on the current task.
 - **Focus Timer:** Countdown timer for the overall session.
-- **Mini Task Timer:** A repeating timer for rapid completion of small focus items.
+- **Mini Task Timer:** A repeating timer for rapid completion of small focus items. (Mini timers remain active during meeting subtasks).
 - **Auditory Feedback:** Chimes when timers expire.
 
 **Commands:**
-- `x`: **Done.** Marks the current task and all subtasks as complete `[x]`. (Also resets the Mini Timer if active).
-- `x<idx>`: **Subtask Done.** Marks the subtask at `<idx>` as complete `[x]`.
-- `e`: **Edit.** Opens the current task and its sub-items in `vi` for editing.
-- `-`: **Cancel.** Marks the current task as cancelled `[-]`.
-- `>`: **Defer.** Marks the task as deferred `[>]` and appends it to a tomorrow-plan.txt file. (Also resets the Mini Timer if active).
+- `x`: **Done.** Marks the current focused item (and its sub-items) as complete `[x]`. Automatically advances to the next pending subtask or parent. (Also resets the Mini Timer if active).
+- `x<idx>`: **Subtask Done.** Marks the subtask at `<idx>` relative to current focus as complete `[x]`.
+- `e`: **Edit.** Opens the current focused item and its nested sub-items in `vi` for editing.
+- `-`: **Cancel.** Marks the current focused item as cancelled `[-]`.
+- `>`: **Defer.** Marks the focused item as deferred `[>]` and appends it as a top-level task to a tomorrow-plan.txt file. (Also resets the Mini Timer if active).
 - `f <mins>` or `f`: **Focus.** Sets/Changes the Focus Timer duration.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
-- `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes to the top of the stack.
-- `n`: **Add.** Opens `vi` to add one or more top-level tasks/notes or sub-items.
+- `N`: **Prioritize.** Opens `vi` to add tasks/notes. If input is indented, they are prioritized hierarchically before the current focus. Otherwise, they go to the top of the stack.
+- `n`: **Add.** Opens `vi` to add tasks/notes. If input is indented, they are added as sub-items after the current focus. Otherwise, they are appended to the stack.
 - `b <mins>`: **Break.** Enters Break Mode for specified minutes (default 5).
 - `i`: **Ignore.** Skips the current item (marks as cancelled if it's a task).
 - `t`: **Triage.** Returns to Triage Mode.

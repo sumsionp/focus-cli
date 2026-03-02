@@ -826,9 +826,9 @@ class DeepWorkCLI:
                     self.play_chime()
                     self.last_chime_timestamp = now
                     self.last_msg = "!!! BREAK EXPIRED !!!"
-        elif self.mode == "WORK":
+        elif self.mode in ["WORK", "TRIAGE"]:
             is_meeting = False
-            if self.triage_stack:
+            if self.mode == "WORK" and self.triage_stack:
                 is_meeting = parse_meeting_time(self.triage_stack[0]['line']) is not None
 
             if self.focus_start_time:
@@ -910,7 +910,16 @@ class DeepWorkCLI:
         """Minimal redraw of just the header to preserve terminal selection."""
         sys.stdout.write("\033[s") # Save cursor
         now = time.time()
-        if self.mode == "WORK":
+        if self.mode == "TRIAGE":
+            focus_elapsed = int(now - (self.focus_start_time if self.focus_start_time else now))
+            focus_remaining = self.focus_threshold - focus_elapsed
+            f_sign = "-" if focus_remaining < 0 else ""
+            fm, fs = divmod(abs(focus_remaining), 60)
+            f_color = "\033[1;31m" if focus_remaining <= 0 else ""
+            timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
+
+            sys.stdout.write("\033[1;1H" + f"\033[K--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
+        elif self.mode == "WORK":
             if not self.triage_stack: return
             if self.task_start_time is None: self.task_start_time = now
             if self.focus_start_time is None: self.focus_start_time = now
@@ -981,6 +990,7 @@ class DeepWorkCLI:
             subprocess.run(["vi", "+$", "+startinsert", FILENAME])
 
         self.mode = "TRIAGE"
+        self.focus_start_time = time.time()
         self.commit_to_ledger("Triage Session Started at", [])
         self.load_context()
         self.sort_triage_stack()
@@ -1045,11 +1055,11 @@ class DeepWorkCLI:
                     last_exceeded = is_exceeded
 
                 elif current_second != last_render_second:
-                    if self.mode in ["WORK", "BREAK"]:
+                    if self.mode in ["WORK", "BREAK", "TRIAGE"]:
                         self.update_timer_ui()
                     last_render_second = current_second
 
-                if self.mode in ["WORK", "BREAK"]:
+                if self.mode in ["WORK", "BREAK", "TRIAGE"]:
                     self.check_chime()
 
                 if self.mode == "WORK":
@@ -1093,7 +1103,16 @@ class DeepWorkCLI:
             termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
     def render_triage(self):
-        print(f"--- TRIAGE: {os.path.basename(FILENAME)} ---")
+        now = time.time()
+        focus_elapsed = int(now - (self.focus_start_time if self.focus_start_time else now))
+        focus_remaining = self.focus_threshold - focus_elapsed
+        f_sign = "-" if focus_remaining < 0 else ""
+        fm, fs = divmod(abs(focus_remaining), 60)
+
+        f_color = "\033[1;31m" if focus_remaining <= 0 else ""
+        timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
+
+        print(f"--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
 
         meetings = []
         for i, t in enumerate(self.triage_stack):
@@ -1129,7 +1148,7 @@ class DeepWorkCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [w] work, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [b#] break, [w] work, [q] quit")
 
     def render_work(self):
         if not self.triage_stack:
@@ -1249,6 +1268,7 @@ class DeepWorkCLI:
                 self.sort_triage_stack()
                 self.mode = "TRIAGE"; self.task_start_time = None
                 self.break_start_time = None
+                if self.focus_start_time is None: self.focus_start_time = time.time()
                 return
 
             if base_cmd == 'n' and self.mode in ["WORK", "BREAK", "TRIAGE"]:
@@ -1385,6 +1405,27 @@ class DeepWorkCLI:
                     if 0 <= idx < len(self.triage_stack):
                         self.triage_stack[idx] = self._edit_item(self.triage_stack[idx])
                         self.initial_stack = copy.deepcopy(self.triage_stack)
+
+                elif base_cmd == 'b':
+                    duration = 5
+                    if len(parts) > 1:
+                        try:
+                            duration = int(parts[1])
+                        except ValueError:
+                            self.last_msg = f"Invalid break duration: {parts[1]}"
+                            return
+
+                    if duration <= 0:
+                        self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
+                        return
+
+                    self.mode = "BREAK"
+                    self.break_duration = duration
+                    self.break_start_time = time.time()
+                    self.break_quote = random.choice(BREAK_QUOTES)
+                    self.last_chime_timestamp = 0
+                    self.commit_to_ledger(f"Break for {duration} at", [])
+                    return
 
                 elif base_cmd in ['>', '>>']:
                     if self._handle_defer_command(base_cmd, parts):

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import re
@@ -19,6 +20,8 @@ FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE
 LOG_FILE = "deepwork_activity.log"
 ALERT_THRESHOLD = 25 * 60
 CHIME_COMMAND = None # Set to a command string like "play /path/to/sound.wav" to override
+MEETING_COLOR = "\033[1;32m" # Green
+OVERLAP_COLOR = "\033[1;31m" # Red
 
 BREAK_QUOTES = [
     "The time to relax is when you don't have time for it. – Sydney J. Harris",
@@ -180,6 +183,43 @@ class DeepWorkCLI:
                             counts[f'[{state}]'] += 1
                         seen_tasks.add(content)
         return counts
+
+    def sort_triage_stack(self):
+        """Move non-active meetings to the bottom, sorted by start time, while keeping active meetings at top."""
+        if not self.triage_stack:
+            return
+
+        now = datetime.now()
+        active_meeting = None
+        other_tasks = []
+        inactive_meetings = []
+
+        for item in self.triage_stack:
+            m_time = parse_meeting_time(item['line'])
+            if m_time:
+                if m_time[0] <= now < m_time[1]:
+                    if not active_meeting:
+                        active_meeting = item
+                    else:
+                        # If there's already an active meeting, treat this one as inactive
+                        inactive_meetings.append((m_time[0], item))
+                else:
+                    inactive_meetings.append((m_time[0], item))
+            else:
+                other_tasks.append(item)
+
+        # Sort inactive meetings by start time
+        inactive_meetings.sort(key=lambda x: x[0])
+        sorted_inactive = [m[1] for m in inactive_meetings]
+
+        new_stack = []
+        if active_meeting:
+            new_stack.append(active_meeting)
+
+        new_stack.extend(other_tasks)
+        new_stack.extend(sorted_inactive)
+
+        self.triage_stack = new_stack
 
     def load_context(self):
         """Whole-file aware parser with resolution logic. Resolutions are [x], [-], [>], and [e]."""
@@ -351,7 +391,7 @@ class DeepWorkCLI:
                 fd = sys.stdin.fileno()
                 termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
-            os.system(f"vi +startinsert {temp_path}")
+            subprocess.run(["vi", "+startinsert", temp_path])
 
             with open(temp_path, 'r') as f:
                 lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
@@ -408,7 +448,7 @@ class DeepWorkCLI:
                 fd = sys.stdin.fileno()
                 termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
-            os.system(f"vi {temp_path}")
+            subprocess.run(["vi", temp_path])
 
             with open(temp_path, 'r') as f:
                 new_lines = [l.rstrip() for l in f.readlines() if l.strip()]
@@ -934,7 +974,16 @@ class DeepWorkCLI:
         sys.stdout.flush()
 
     def run(self):
+        if len(sys.argv) == 1:
+            # Direct Launch: record free write and open vi
+            with open(FILENAME, 'a') as f:
+                f.write(f"\n------- Free Write {get_timestamp()} -------\n")
+            subprocess.run(["vi", "+$", "+startinsert", FILENAME])
+
+        self.mode = "TRIAGE"
+        self.commit_to_ledger("Triage Session Started at", [])
         self.load_context()
+        self.sort_triage_stack()
         self.initial_stack = copy.deepcopy(self.triage_stack)
 
         fd = sys.stdin.fileno()
@@ -1064,7 +1113,9 @@ class DeepWorkCLI:
         visible_count = 0
         for i, t in enumerate(self.triage_stack):
             if i in overlapping_indices:
-                color = "\033[1;31m"
+                color = OVERLAP_COLOR
+            elif parse_meeting_time(t['line']):
+                color = MEETING_COLOR
             elif '[]' in t['line']:
                 color = "\033[1;36m"
             else:
@@ -1194,6 +1245,8 @@ class DeepWorkCLI:
                 return "QUIT"
 
             if base_cmd == 't': 
+                self.commit_to_ledger("Triage Session Started at", [])
+                self.sort_triage_stack()
                 self.mode = "TRIAGE"; self.task_start_time = None
                 self.break_start_time = None
                 return

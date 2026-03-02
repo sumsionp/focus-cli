@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 # --- CONFIG ---
 DATE_FORMAT = '%Y%m%d'
-FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-notes.txt')
+FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-plan.txt')
 LOG_FILE = "deepwork_activity.log"
 ALERT_THRESHOLD = 25 * 60
 CHIME_COMMAND = None # Set to a command string like "play /path/to/sound.wav" to override
@@ -983,11 +983,10 @@ class DeepWorkCLI:
         sys.stdout.flush()
 
     def run(self):
-        if len(sys.argv) == 1:
-            # Direct Launch: record free write and open vi
-            with open(FILENAME, 'a') as f:
-                f.write(f"\n------- Free Write {get_timestamp()} -------\n")
-            subprocess.run(["vi", "+$", "+startinsert", FILENAME])
+        # Always open in Free Write mode at start
+        with open(FILENAME, 'a') as f:
+            f.write(f"\n------- Free Write {get_timestamp()} -------\n\n")
+        subprocess.run(["vi", "+$", "+startinsert", FILENAME])
 
         self.mode = "TRIAGE"
         self.focus_start_time = time.time()

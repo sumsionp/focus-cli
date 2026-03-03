@@ -18,7 +18,8 @@ from datetime import datetime, timedelta
 DATE_FORMAT = '%Y%m%d'
 FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-plan.txt')
 LOG_FILE = "deepwork_activity.log"
-ALERT_THRESHOLD = 25 * 60
+DEFAULT_FOCUS_THRESHOLD_MINS = 25
+ALERT_THRESHOLD = DEFAULT_FOCUS_THRESHOLD_MINS * 60
 CHIME_COMMAND = None # Set to a command string like "play /path/to/sound.wav" to override
 MEETING_COLOR = "\033[1;32m" # Green
 OVERLAP_COLOR = "\033[1;31m" # Red
@@ -183,6 +184,27 @@ class DeepWorkCLI:
                             counts[f'[{state}]'] += 1
                         seen_tasks.add(content)
         return counts
+
+    def enter_free_write(self):
+        """Appends Free Write marker, launches vi, reloads context, and sorts the stack."""
+        with open(FILENAME, 'a') as f:
+            f.write(f"\n------- Free Write {get_timestamp()} -------\n\n")
+
+        # Restore terminal settings before vi
+        fd = sys.stdin.fileno()
+        if self.original_termios:
+            termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+
+        subprocess.run(["vi", "+$", "+startinsert", FILENAME])
+
+        # Re-apply cbreak after vi
+        tty.setcbreak(fd)
+
+        self.mode = "TRIAGE"
+        self.commit_to_ledger("Triage Session Started at", [])
+        self.load_context()
+        self.sort_triage_stack()
+        self.initial_stack = copy.deepcopy(self.triage_stack)
 
     def sort_triage_stack(self):
         """Move non-active meetings to the bottom, sorted by start time, while keeping active meetings at top."""
@@ -972,20 +994,12 @@ class DeepWorkCLI:
         sys.stdout.flush()
 
     def run(self):
-        # Always open in Free Write mode at start
-        with open(FILENAME, 'a') as f:
-            f.write(f"\n------- Free Write {get_timestamp()} -------\n\n")
-        subprocess.run(["vi", "+$", "+startinsert", FILENAME])
-
-        self.mode = "TRIAGE"
-        self.focus_start_time = time.time()
-        self.commit_to_ledger("Triage Session Started at", [])
-        self.load_context()
-        self.sort_triage_stack()
-        self.initial_stack = copy.deepcopy(self.triage_stack)
-
         fd = sys.stdin.fileno()
         self.original_termios = termios.tcgetattr(fd)
+
+        # Always open in Free Write mode at start
+        self.enter_free_write()
+        self.focus_start_time = time.time()
         try:
             tty.setcbreak(fd)
             buffer = ""
@@ -1068,6 +1082,9 @@ class DeepWorkCLI:
                         termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
                         print()
                         result = self.handle_command(cmd)
+                        if result == "REDRAW":
+                            last_mode = None
+                            continue
                         if result == "QUIT":
                             summary = self.get_daily_summary()
                             print("\n" + "="*35)
@@ -1076,9 +1093,28 @@ class DeepWorkCLI:
                             print(f"  Cancelled [-]: {summary['[-]']}")
                             print(f"  Deferred  [>]: {summary['[>]']}")
                             print("="*35)
-                            input("\nTake a break. Press Enter to return to Free Write...")
+
+                            sys.stdout.write("\nPress Enter to quit, or 'f' to return to Free Write... ")
+                            sys.stdout.flush()
+
+                            # Wait for input
+                            tty.setcbreak(fd)
+                            should_continue = False
+                            while True:
+                                rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                                if rlist:
+                                    char = sys.stdin.read(1).lower()
+                                    if char in ['\n', '\r']:
+                                        return "QUIT"
+                                    elif char == 'f':
+                                        self.enter_free_write()
+                                        should_continue = True
+                                        break
+
+                            if should_continue:
+                                last_mode = None # Force structural change redraw
+                                continue
                             break
-                        tty.setcbreak(fd)
                     elif char in ['\x7f', '\x08']:
                         buffer = buffer[:-1]
                     elif ord(char) == 3: # Ctrl+C
@@ -1258,6 +1294,10 @@ class DeepWorkCLI:
                 self.break_start_time = None
                 if self.focus_start_time is None: self.focus_start_time = time.time()
                 return
+
+            if base_cmd == 'f' and self.mode in ["WORK", "TRIAGE"]:
+                self.enter_free_write()
+                return "REDRAW"
 
             if base_cmd == 'n' and self.mode in ["WORK", "BREAK", "TRIAGE"]:
                 context = None
@@ -1451,23 +1491,6 @@ class DeepWorkCLI:
                     self.commit_to_ledger(f"Break for {duration} at", [])
                     return
 
-                if base_cmd == 'f' and self.mode == "WORK":
-                    if len(parts) > 1:
-                        try:
-                            self.focus_threshold = int(parts[1]) * 60
-                            self.last_chime_timestamp = 0
-                            self.last_msg = f"Focus threshold set to {parts[1]}m"
-                        except ValueError:
-                            self.last_msg = f"Invalid focus duration: {parts[1]}"
-                    else:
-                        val = input("Enter focus length (mins): ")
-                        try:
-                            self.focus_threshold = int(val) * 60
-                            self.last_chime_timestamp = 0
-                            self.last_msg = f"Focus threshold set to {val}m"
-                        except ValueError:
-                            self.last_msg = f"Invalid focus duration: {val}"
-                    return
 
                 if base_cmd == 'e':
                     new_item = self._edit_item(focus_item)

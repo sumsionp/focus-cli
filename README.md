@@ -45,6 +45,7 @@ Entered automatically after the initial Free Write session or by using the `t` c
 - `p <src> <dest>`: **Prioritize/Reorder.** Moves item at index `<src>` to `<dest>`.
 - `a <note_idx> <task_idx>`: **Assign.** Moves a note (or task) at `<note_idx>` to be a sub-item of task at `<task_idx>`.
 - `e <idx>`: **Edit.** Opens the item and its sub-items in `vi` for editing.
+- `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`.
 - `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
 - `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes to the top of the stack.
 - `n`: **Add.** Opens `vi` to add one or more tasks/notes to the end of the stack.
@@ -68,7 +69,7 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - `e`: **Edit.** Opens the current focused item and its nested sub-items in `vi` for editing.
 - `-`: **Cancel.** Marks the current focused item as cancelled `[-]`.
 - `>`: **Defer.** Marks the focused item as deferred `[>]` and appends it as a top-level task to a tomorrow-plan.txt file. (Also resets the Mini Timer if active).
-- `f <mins>` or `f`: **Focus.** Sets/Changes the Focus Timer duration.
+- `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`. After editing, you return to Triage Mode.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
 - `N`: **Prioritize.** Opens `vi` to add tasks/notes. If input is indented, they are prioritized hierarchically before the current focus. Otherwise, they go to the top of the stack.

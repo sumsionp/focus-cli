@@ -1003,6 +1003,9 @@ class DeepWorkCLI:
             last_exceeded = False
 
             while True:
+                # Ensure cbreak is set for input loop
+                tty.setcbreak(fd)
+
                 now = time.time()
                 current_second = int(now)
                 current_task = self.triage_stack[0] if self.triage_stack else None
@@ -1075,6 +1078,8 @@ class DeepWorkCLI:
                             last_mode = None # Force redraw on empty enter
                             continue
 
+                        # Restore terminal for command processing
+                        termios.tcsetattr(fd, termios.TCSANOW, self.original_termios)
                         print()
                         result = self.handle_command(cmd)
 
@@ -1096,6 +1101,7 @@ class DeepWorkCLI:
                                 if rlist_sub:
                                     sub_char = sys.stdin.read(1).lower()
                                     if sub_char in ['\n', '\r']:
+                                        print()
                                         return "QUIT"
                                     elif sub_char == 'f':
                                         self.enter_free_write()
@@ -1168,11 +1174,10 @@ class DeepWorkCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [b#] break, [w] work, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [b#] break, [w] work, [q] quit")
 
     def render_work(self):
         if not self.triage_stack:
-            print("\n\033[1;32m[FLOW COMPLETE]\033[0m Press 'q' to return to vi.")
             return
         
         now = time.time()
@@ -1257,7 +1262,7 @@ class DeepWorkCLI:
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
         extra_cmds = ", [Space] reset" if is_mini_session else ""
-        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [m#] mini{extra_cmds}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
+        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f] free write, [m#] mini{extra_cmds}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
@@ -1616,6 +1621,10 @@ class DeepWorkCLI:
                         self.mini_timer_last_chime_timestamp = 0
                     self.task_start_time = None
                     self.initial_stack = copy.deepcopy(self.triage_stack)
+
+                    if not self.triage_stack and self.mode == "WORK":
+                        self.commit_to_ledger("Work Session Complete", [])
+                        return "QUIT"
 
         except Exception as e:
             self.last_msg = f"Error: {e}"

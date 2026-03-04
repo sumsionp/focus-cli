@@ -326,14 +326,15 @@ class DeepWorkCLI:
         today_str = datetime.now().strftime(DATE_FORMAT)
         is_current_file_today = today_str in FILENAME
 
+        # Target version: main task [], subtasks preserve status
+        target_task = self._prepare_task_with_markers(task, '[]', '[]')
+        # Current ledger version: main task [>], pending subtasks [>], others preserve
+        ledger_task = self._prepare_task_with_markers(task, '[>]', '[>]')
+
         if is_target_today and is_current_file_today:
-            return copy.deepcopy(task), None, "today"
+            return ledger_task, target_task, "today"
         else:
             target_file = get_target_file(target_date)
-            # Target version: main task [], subtasks preserve status
-            target_task = self._prepare_task_with_markers(task, '[]', '[]')
-            # Current ledger version: main task [>], pending subtasks [>], others preserve
-            ledger_task = self._prepare_task_with_markers(task, '[>]', '[>]')
             return ledger_task, target_task, target_file
 
     def _handle_defer_command(self, base_cmd, parts):
@@ -362,7 +363,7 @@ class DeepWorkCLI:
 
             if target_res == "today":
                 self.commit_to_ledger("Deferred", ledger_items)
-                self.triage_stack.extend(ledger_items)
+                self.triage_stack.extend(target_items)
                 self.last_msg = f"Deferred {count} items to end of today's stack"
             else:
                 self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
@@ -373,7 +374,7 @@ class DeepWorkCLI:
             l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
             if res == "today":
                 self.commit_to_ledger("Deferred", [l_task])
-                self.triage_stack.append(l_task)
+                self.triage_stack.append(t_task)
                 self.last_msg = "Deferred to end of today's stack"
             else:
                 self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
@@ -1563,29 +1564,13 @@ class DeepWorkCLI:
                         self.last_msg = "Command disabled during break."
                         return
 
-                    if base_cmd == '>>' or (base_cmd == '>' and not focus_path):
+                    if base_cmd == '>>' or base_cmd == '>':
                         if self._handle_defer_command(base_cmd, parts):
                             return
 
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
                     marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
                     ledger_label = {'x': 'Task Completed', '-': 'Task Cancelled', '>': 'Task Deferred'}[effective_cmd]
-
-                    if base_cmd == '>':
-                        # Deferring a sub-task
-                        defer_date_str = " ".join(parts[1:])
-                        target_date = parse_defer_date(defer_date_str)
-                        if not target_date:
-                            self.last_msg = f"Invalid date: {defer_date_str}"
-                            return
-
-                        l_task, t_task, res = self._prepare_defer_tasks(focus_item, target_date)
-                        if res != "today":
-                            self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
-                            self.last_msg = f"Task deferred to {res}"
-                        else:
-                            self.triage_stack.append(l_task)
-                            self.last_msg = "Task deferred to end of today's stack"
 
                     # Resolve item
                     resolved_item = self._prepare_task_with_markers(focus_item, marker, marker)

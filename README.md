@@ -69,7 +69,7 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - `x<idx>`: **Subtask Done.** Marks the subtask at `<idx>` relative to current focus as complete `[x]`.
 - `e`: **Edit.** Opens the current focused item and its nested sub-items in `vi` for editing.
 - `-`: **Cancel.** Marks the current focused item as cancelled `[-]`.
-- `>`: **Defer.** Marks the entire current top-level task tree as deferred `[>]` and appends it as a top-level task to the specified target file (defaulting to tomorrow's plan or the end of the current today's stack). (Also resets the Mini Timer if active).
+- `>`: **Defer.** Marks the entire current top-level task tree as deferred `[>]` and appends it as a top-level task to the specified target file (defaulting to the end of today's stack). (Also resets the Mini Timer if active).
 - `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`. After editing, you return to Triage Mode.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).

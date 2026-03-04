@@ -1,8 +1,0 @@
-Session Start - 03/04/2026 01:23:02 AM
-
-------- Deferred 03/04/2026 01:23:02 AM -------
-[>] Root Task
-  [x] Done Sub
-  [>] Focus Sub
-    Some Note
-  [>] Later Sub

@@ -1,7 +1,0 @@
-
-------- Deferred from last session 03/04/2026 01:23:02 AM -------
-[] Root Task
-  [x] Done Sub
-  [] Focus Sub
-    Some Note
-  [] Later Sub

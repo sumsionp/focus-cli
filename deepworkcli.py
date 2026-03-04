@@ -141,6 +141,24 @@ def _parse_time_with_ampm(time_str, ampm, reference_date):
 
     return reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
 
+def strip_meeting_time(text):
+    """Removes supported meeting time patterns from task text."""
+    patterns = [
+        # Format: 11:00 AM-1:00 PM (must be before more general formats)
+        r'\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*-\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)',
+        # Format: 2:00-3:00 PM or 2-3 PM
+        r'\d{1,2}(?::\d{2})?\s*-\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)',
+        # Format: 2 PM 2h 15m or just 2 PM
+        r'\d{1,2}(?::\d{2})?\s*(?:AM|PM)(?:\s*\d+H)?(?:\s*\d+M)?'
+    ]
+    result = text
+    for p in patterns:
+        result = re.sub(p, '', result, flags=re.IGNORECASE)
+
+    # Cleanup extra spaces
+    result = re.sub(r'\s+', ' ', result).strip()
+    return result
+
 class DeepWorkCLI:
     def __init__(self):
         self.mode = "TRIAGE"
@@ -327,10 +345,14 @@ class DeepWorkCLI:
         today_str = datetime.now().strftime(DATE_FORMAT)
         is_current_file_today = today_str in FILENAME
 
+        # Deep copy to avoid mutating original
+        deferred_task = copy.deepcopy(task)
+        deferred_task['line'] = strip_meeting_time(deferred_task['line'])
+
         # Target version: main task [], subtasks preserve status
-        target_task = self._prepare_task_with_markers(task, '[]', '[]')
+        target_task = self._prepare_task_with_markers(deferred_task, '[]', '[]')
         # Current ledger version: main task [>], pending subtasks [>], others preserve
-        ledger_task = self._prepare_task_with_markers(task, '[>]', '[>]')
+        ledger_task = self._prepare_task_with_markers(deferred_task, '[>]', '[>]')
 
         if is_target_today and is_current_file_today:
             return ledger_task, target_task, "today"

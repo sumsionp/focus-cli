@@ -660,7 +660,8 @@ class DeepWorkCLI:
         if hier_items:
             any_changed = True
             if self.mode == "TRIAGE":
-                target = self.triage_stack[0] if base_cmd_orig == 'N' else self.triage_stack[-1]
+                # User expects leading subtasks in Triage Mode to target the first task in the stack
+                target = self.triage_stack[0]
                 self._insert_hierarchical_batch(target, [], hier_items, base_cmd_orig)
                 self.commit_to_ledger(mode_label, [target])
                 self.last_msg = "Sub-item(s) Added"
@@ -721,8 +722,19 @@ class DeepWorkCLI:
     def _insert_hierarchical_batch(self, target, path, items, base_cmd_orig):
         # Normalizes a batch of items (stripping the common 2-space prefix)
         # and appends/prepends to target hierarchy.
-        pos = 'before' if base_cmd_orig == 'N' else 'after'
-        for it in items:
+
+        # In Triage Mode (or whenever path is empty), 'before'/'after' don't make sense
+        # for leading items as there is no focus item to be relative to.
+        # Instead, we use 'prepend_notes' for N and 'append' for n.
+        if not path:
+            pos = 'prepend_notes' if base_cmd_orig == 'N' else 'append'
+        else:
+            pos = 'before' if base_cmd_orig == 'N' else 'after'
+
+        # Reverse items for prepend_notes to keep their original order
+        items_to_process = reversed(items) if pos == 'prepend_notes' else items
+
+        for it in items_to_process:
             # Shift item to be relative to target (e.g. 2 spaces -> 0 spaces)
             it_copy = copy.deepcopy(it)
             it_copy['indent'] = max(0, it['indent'] - 2)

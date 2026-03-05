@@ -449,18 +449,17 @@ class DeepWorkCLI:
             indent_len = len(m.group(1))
             content = line[indent_len:]
 
-            if re.match(r'^\[[xe\->\s]?\]', content):
+            # A line starts a new item if:
+            # 1. There is no current item
+            # 2. OR its indentation is less than or equal to the current item's base indentation
+            if not current_item or indent_len <= current_item['indent']:
                 current_item = {'line': content, 'notes': [], 'indent': indent_len}
                 items.append(current_item)
             else:
-                if current_item:
-                    # Preserve relative indentation for notes by stripping only the task's base indent + 2
-                    note_rel = line[current_item['indent'] + 2:] if len(line) >= current_item['indent'] + 2 else line.lstrip()
-                    current_item['notes'].append(note_rel)
-                else:
-                    # Treating as a task if it's the first thing in the batch, even if it doesn't have a marker
-                    current_item = {'line': content, 'notes': [], 'indent': indent_len}
-                    items.append(current_item)
+                # It's a note for the current item
+                # Preserve relative indentation for notes by stripping only the task's base indent + 2
+                note_rel = line[current_item['indent'] + 2:] if len(line) >= current_item['indent'] + 2 else line.lstrip()
+                current_item['notes'].append(note_rel)
 
         return items
 

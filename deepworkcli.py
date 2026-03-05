@@ -904,31 +904,30 @@ class DeepWorkCLI:
         for i, task in enumerate(self.triage_stack):
             m_time = parse_meeting_time(task['line'])
             if m_time and m_time[0] <= now < m_time[1]:
-                # If we are in BREAK mode, switch to WORK mode first
-                if self.mode == "BREAK":
-                    self._transition_from_break_to_work()
-
                 meeting_id = f"{task['line']}_{m_time[0]}"
                 if meeting_id not in self.chimed_meetings:
+                    if self.mode == "BREAK":
+                        self._transition_from_break_to_work()
                     self.play_chime()
                     self.chimed_meetings.add(meeting_id)
                     task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
                     self.last_msg = f"Meeting Starting: {task_content}"
 
-                if i > 0 and not found_active_meeting:
-                    current_task = self.triage_stack[0]
-                    current_m_time = parse_meeting_time(current_task['line'])
-                    is_current_active_meeting = current_m_time and current_m_time[0] <= now < current_m_time[1]
+                if self.mode == "WORK":
+                    if i > 0 and not found_active_meeting:
+                        current_task = self.triage_stack[0]
+                        current_m_time = parse_meeting_time(current_task['line'])
+                        is_current_active_meeting = current_m_time and current_m_time[0] <= now < current_m_time[1]
 
-                    if not is_current_active_meeting:
-                        self.triage_stack.insert(0, self.triage_stack.pop(i))
-                        self.task_start_time = None
-                        task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', self.triage_stack[0]['line'])
-                        self.last_msg = f"Meeting Started: {task_content}"
+                        if not is_current_active_meeting:
+                            self.triage_stack.insert(0, self.triage_stack.pop(i))
+                            self.task_start_time = None
+                            task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', self.triage_stack[0]['line'])
+                            self.last_msg = f"Meeting Started: {task_content}"
+                            found_active_meeting = True
+
+                    if i == 0:
                         found_active_meeting = True
-
-                if i == 0:
-                    found_active_meeting = True
 
     def render_break(self):
         elapsed_break = time.time() - self.break_start_time

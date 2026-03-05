@@ -114,3 +114,11 @@ The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM
 - `------- Break for <mins> at <Timestamp> -------`
 - `------- Deferred from last session <Timestamp> -------`
 - `------- Edited <Timestamp> -------`
+
+## Development
+
+### Running Tests
+To run the unit tests, use the following command from the project root:
+```bash
+python3 -m unittest discover tests
+```

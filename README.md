@@ -93,6 +93,8 @@ This mode is designed for rapid-fire task completion (e.g., clearing an email in
 ### 5. Break Mode
 Entered via `b` in Work Mode. Displays inspirational quotes and a countdown.
 
+If a scheduled meeting starts while you are on a break, the UI will turn red, a chime will sound, and the meeting details will appear in the status bar. The session remains in Break Mode, allowing you to finish your break or manually resume work with `w`.
+
 **Commands:**
 - `w`: **Work.** Resumes the Work session.
 - `n`: **Add.** Add notes or tasks during your break.

@@ -59,6 +59,7 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 
 **Features:**
 - **Automatic Hierarchical Focus:** The system automatically drills down into the deepest pending subtask (`[]`). It presents the immediate parent as a header (`PARENT TASK >>`) and the sub-item as the active focus (`FOCUS >>`).
+- **Visual Progress Bar:** Tracks your completion progress for the current task level (top-level or subtasks). It shows a bar like `[###     ] Completed 3/10` right above your focus. Cancelled and deferred tasks are counted as completed.
 - **Automated Stack Rescue:** If the program is interrupted (e.g., via `Ctrl+C` or `SIGTERM`), it automatically "rescues" the current triage stack to the ledger to prevent data loss.
 - **Task Timer:** Tracks time spent on the current task.
 - **Focus Timer:** Countdown timer for the overall session.

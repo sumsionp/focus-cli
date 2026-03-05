@@ -765,6 +765,56 @@ class DeepWorkCLI:
             return True
         return False
 
+    def _get_progress_stats(self, focus_item, parent_item):
+        completed = 0
+        total = 0
+
+        if parent_item is None:
+            # Top-level progress
+            summary = self.get_daily_summary()
+            completed = sum(summary.values())
+            pending = 0
+            for it in self.triage_stack:
+                if it['line'].strip().startswith('[]') or it['line'].strip().startswith('[ ]'):
+                    pending += 1
+            total = completed + pending
+        else:
+            # Subtask level progress
+            for line in parent_item['notes']:
+                if line.startswith('  '):
+                    continue
+
+                marker_match = re.match(r'^\[([xe\->\s]?)\]', line.strip())
+                if marker_match:
+                    total += 1
+                    state = marker_match.group(1).strip()
+                    if state in ['x', '-', '>']:
+                        completed += 1
+
+        return completed, total
+
+    def _render_progress_bar(self, completed, total):
+        if total == 0:
+            return ""
+
+        try:
+            term_width = os.get_terminal_size().columns
+        except OSError:
+            term_width = 65
+
+        # Bar label: " Completed 5/30"
+        label = f" Completed {completed}/{total}"
+        max_bar_width = term_width - len(label) - 2 # 2 for brackets []
+        if max_bar_width < 10:
+             # Fallback if terminal is very narrow
+             return f"[{completed}/{total}]"
+
+        bar_width = min(40, max_bar_width) # Cap bar at 40 chars or terminal width
+        filled_width = int(round((completed / total) * bar_width))
+
+        bar = "#" * filled_width + " " * (bar_width - filled_width)
+        return f"[{bar}]{label}"
+
     def _get_path_pruned_item(self, item, path, leaf_item=None):
         """Returns a copy of item with hierarchy pruned to only show the path to focus."""
         if not path:
@@ -1310,6 +1360,13 @@ class DeepWorkCLI:
         if parent_item:
             parent_display = re.sub(r'^\[\s?\]\s*', '', parent_item['line'])
             print(f"\n\033[1;34mPARENT TASK >>\n{parent_display}\033[0m")
+
+        # Progress Bar
+        completed, total = self._get_progress_stats(focus_item, parent_item)
+        if total > 0:
+            p_bar = self._render_progress_bar(completed, total)
+            if p_bar:
+                print(f"\n\033[1;36m{p_bar}\033[0m")
 
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
         if is_task:

@@ -5,14 +5,14 @@ import time
 import sys
 import os
 
-# Mock FILENAME before importing DeepWorkCLI
-os.environ['DEEPWORK_FILENAME'] = 'test-plan.txt'
+# Mock FILENAME before importing FocusCLI
+os.environ['FOCUS_FILENAME'] = 'test-plan.txt'
 
-from deepworkcli import DeepWorkCLI, parse_meeting_time
+from focuscli import FocusCLI, parse_meeting_time
 
 class TestMeetingInterruption(unittest.TestCase):
     def setUp(self):
-        self.cli = DeepWorkCLI()
+        self.cli = FocusCLI()
         # Mock dependencies to avoid side effects
         self.cli.play_chime = MagicMock()
         self.cli.commit_to_ledger = MagicMock()
@@ -35,7 +35,7 @@ class TestMeetingInterruption(unittest.TestCase):
         # 3. Fast forward time to when meeting starts
         future_now = meeting_start + timedelta(seconds=1)
 
-        with patch('deepworkcli.datetime') as mock_datetime:
+        with patch('focuscli.datetime') as mock_datetime:
             mock_datetime.now.return_value = future_now
             # 4. Call check_meetings
             self.cli.check_meetings()
@@ -69,7 +69,7 @@ class TestMeetingInterruption(unittest.TestCase):
         self.cli.break_meeting_interrupted = False
 
         # 3. Call check_meetings
-        with patch('deepworkcli.datetime') as mock_datetime:
+        with patch('focuscli.datetime') as mock_datetime:
             mock_datetime.now.return_value = now
             self.cli.check_meetings()
 

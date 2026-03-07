@@ -6,17 +6,17 @@ import sys
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from deepworkcli import DeepWorkCLI
+from focuscli import FocusCLI
 
 class TestHierarchicalAdd(unittest.TestCase):
     def setUp(self):
-        self.cli = DeepWorkCLI()
+        self.cli = FocusCLI()
         # Mock ledger to avoid file IO
         self.cli.commit_to_ledger = lambda label, items: None
 
     def test_new_task_with_subtasks(self):
         """Scenario 1: Grouping subtasks with a new parent task."""
-        self.cli.mode = "WORK"
+        self.cli.mode = "FOCUS"
         self.cli.triage_stack = [{'line': '[] Active Task', 'notes': []}]
 
         lines = [
@@ -37,7 +37,7 @@ class TestHierarchicalAdd(unittest.TestCase):
             {'line': '[] Task 1', 'notes': []},
             {'line': '[] Task 2', 'notes': []}
         ]
-        self.cli.mode = "WORK"
+        self.cli.mode = "FOCUS"
         self.cli.triage_stack = copy.deepcopy(initial_stack)
 
         lines = [
@@ -76,7 +76,7 @@ class TestHierarchicalAdd(unittest.TestCase):
 
     def test_prepend_notes_order_preservation(self):
         """Ensure prepended hierarchical items maintain original order."""
-        self.cli.mode = "WORK"
+        self.cli.mode = "FOCUS"
         self.cli.triage_stack = [{'line': '[] Active Task', 'notes': ['[] Existing Sub']}]
 
         lines = [

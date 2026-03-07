@@ -1,4 +1,4 @@
-# DeepWorkCLI
+# FocusCLI
 
 A Python-based modal CLI tool (TUI) to capture and organize thoughts into trackable tasks and then present those tasks in a way to promote focused completion.
 
@@ -23,7 +23,7 @@ Supported formats:
 - `2 PM 2h 15m`
 
 ## Modal Workflow
-The program has three modes: **Free Write**, **Triage**, and **Work**.
+The program has three modes: **Free Write**, **Triage**, and **Focus**.
 
 ### 1. Free Write Mode
 The program automatically starts in Free Write mode upon launch. It appends a `------- Free Write ... -------` marker to your daily journal file and opens it in `vi`. This is where you enter notes and tasks freely. Once you save and exit the editor (`:wq`), you will be dropped into Triage Mode.
@@ -31,7 +31,7 @@ The program automatically starts in Free Write mode upon launch. It appends a `-
 #### Program Launch
 For the best experience, add an alias to your shell configuration (e.g., `~/.alias` or `~/.bashrc`):
 ```bash
-alias focus='python3 ~/projects/deep-work-cli/deepworkcli.py'
+alias focus='python3 ~/projects/deep-work-cli/focuscli.py'
 ```
 Running `focus` will start your session in the daily file (e.g., `YYYYMMDD-plan.txt`).
 
@@ -51,10 +51,10 @@ Entered automatically after the initial Free Write session or by using the `t` c
 - `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes. Indented leading items are attached to the first task in the stack. New top-level tasks are inserted at the top.
 - `n`: **Add.** Opens `vi` to add one or more tasks/notes. Indented leading items are attached to the first task in the stack. New top-level tasks are appended to the end.
 - `b <mins>`: **Break.** Enters Break Mode.
-- `w`: **Work.** Commits the triage session and enters Work Mode.
+- `w`: **Focus.** Commits the triage session and enters Focus Mode.
 - `q`: **Quit.** Exits the CLI.
 
-### 3. Work Mode
+### 3. Focus Mode
 Entered by typing `w` from Triage Mode. It displays the top task along with its associated notes and subtasks.
 
 **Features:**
@@ -90,15 +90,15 @@ This mode is designed for rapid-fire task completion (e.g., clearing an email in
 - **Auto-Reset:** The timer automatically resets to full duration whenever you complete (`x`), cancel (`-`), defer (`>`), or prioritize (`N`) a task.
 - **Persistence:** Once started with `m`, the mode stays active as you move through multiple tasks.
 - **Exceeding Time:** If you exceed the allotted time, the timer will count negative values and play a "tick" sound immediately, and every 30 seconds thereafter, until you reset it.
-- **Auto-Pause:** The mini timer is automatically paused and hidden during scheduled meetings or breaks. Resuming work will automatically reset the mini timer to its full duration.
+- **Auto-Pause:** The mini timer is automatically paused and hidden during scheduled meetings or breaks. Resuming Focus session will automatically reset the mini timer to its full duration.
 
 ### 5. Break Mode
-Entered via `b` in Work Mode. Displays inspirational quotes and a countdown.
+Entered via `b` in Focus Mode. Displays inspirational quotes and a countdown.
 
-If a scheduled meeting starts while you are on a break, the UI will turn red, a chime will sound, and the meeting details will appear in the status bar. The session remains in Break Mode, allowing you to finish your break or manually resume work with `w`.
+If a scheduled meeting starts while you are on a break, the UI will turn red, a chime will sound, and the meeting details will appear in the status bar. The session remains in Break Mode, allowing you to finish your break or manually resume Focus session with `w`.
 
 **Commands:**
-- `w`: **Work.** Resumes the Work session.
+- `w`: **Focus.** Resumes the Focus session.
 - `n`: **Add.** Add notes or tasks during your break.
 - `t`: **Triage.** Return to Triage mode.
 - `q`: **Quit.** Exits the CLI.
@@ -108,13 +108,13 @@ The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM
 - `------- Free Write <Timestamp> -------`
 - `------- Triage Session Started at <Timestamp> -------`
 - `------- Triage <Timestamp> -------`
-- `------- Work <Timestamp> -------`
+- `------- Focus <Timestamp> -------`
 - `------- New Entry(s) <Timestamp> -------`
 - `------- Prioritized Entry(s) <Timestamp> -------`
 - `------- Cancelled <Timestamp> -------`
 - `------- Interrupted <Timestamp> -------`
-- `------- Work Session Complete <Timestamp> -------`
-- `------- Work Session Re-started at <Timestamp> -------`
+- `------- Focus Session Complete <Timestamp> -------`
+- `------- Focus Session Re-started at <Timestamp> -------`
 - `------- Break for <mins> at <Timestamp> -------`
 - `------- Deferred from last session <Timestamp> -------`
 - `------- Edited <Timestamp> -------`

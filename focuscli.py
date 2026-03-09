@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 # --- CONFIG ---
 DATE_FORMAT = '%Y%m%d'
 FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-plan.txt')
-LOG_FILE = "deepwork_activity.log"
+LOG_FILE = "focus_activity.log"
 DEFAULT_FOCUS_THRESHOLD_MINS = 25
 ALERT_THRESHOLD = DEFAULT_FOCUS_THRESHOLD_MINS * 60
 CHIME_COMMAND = None # Set to a command string like "play /path/to/sound.wav" to override
@@ -159,12 +159,12 @@ def strip_meeting_time(text):
     result = re.sub(r'\s+', ' ', result).strip()
     return result
 
-class DeepWorkCLI:
+class FocusCLI:
     def __init__(self):
         self.mode = "TRIAGE"
         self.triage_stack = []
         self.initial_stack = []
-        self.last_msg = "DeepWorkCLI Ready."
+        self.last_msg = "FocusCLI Ready."
         self.task_start_time = None
         self.focus_start_time = None
         self.break_start_time = None
@@ -742,20 +742,20 @@ class DeepWorkCLI:
             it_copy['indent'] = max(0, it['indent'] - 2)
             self._recursive_insert(target, path, [it_copy], position=pos)
 
-    def _transition_from_break_to_work(self):
+    def _transition_from_break_to_focus(self):
         now = time.time()
         break_total_time = now - self.break_start_time
         if self.task_start_time:
             self.task_start_time += break_total_time
         self.focus_start_time = now
-        self.mode = "WORK"
+        self.mode = "FOCUS"
         self.break_meeting_interrupted = False
         if self.mini_timer_active:
             self.mini_timer_remaining = self.mini_timer_duration * 60
             self.mini_timer_last_tick = now
             self.mini_timer_last_chime_timestamp = 0
-        self.commit_to_ledger("Work Session Re-started at", [])
-        self.last_msg = "Work Resumed"
+        self.commit_to_ledger("Focus Session Re-started at", [])
+        self.last_msg = "Focus Resumed"
         self.last_chime_timestamp = 0
 
     def _rescue_stack(self, label="Interrupted"):
@@ -876,7 +876,7 @@ class DeepWorkCLI:
             self.mini_timer_last_chime_timestamp = 0
         self.mini_timer_was_meeting = suppress_mini
 
-        if self.mode == "WORK" and self.triage_stack and not suppress_mini:
+        if self.mode == "FOCUS" and self.triage_stack and not suppress_mini:
             if self.mini_timer_last_tick == 0:
                 self.mini_timer_last_tick = now
 
@@ -940,9 +940,9 @@ class DeepWorkCLI:
                     self.last_chime_timestamp = now
                     if remaining <= 0:
                         self.last_msg = "!!! BREAK EXPIRED !!!"
-        elif self.mode in ["WORK", "TRIAGE"]:
+        elif self.mode in ["FOCUS", "TRIAGE"]:
             is_meeting = False
-            if self.mode == "WORK" and self.triage_stack:
+            if self.mode == "FOCUS" and self.triage_stack:
                 is_meeting = parse_meeting_time(self.triage_stack[0]['line']) is not None
 
             if self.focus_start_time:
@@ -961,7 +961,7 @@ class DeepWorkCLI:
         return m_time[0] <= now_dt < m_time[1]
 
     def check_meetings(self):
-        if self.mode not in ["WORK", "BREAK"]: return
+        if self.mode not in ["FOCUS", "BREAK"]: return
         if not self.triage_stack: return
 
         now = datetime.now()
@@ -978,7 +978,7 @@ class DeepWorkCLI:
                     task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
                     self.last_msg = f"Meeting Starting: {task_content}"
 
-                if self.mode == "WORK":
+                if self.mode == "FOCUS":
                     if i > 0 and not found_active_meeting:
                         current_task = self.triage_stack[0]
                         current_m_time = parse_meeting_time(current_task['line'])
@@ -1021,7 +1021,7 @@ class DeepWorkCLI:
         print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
 
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [N] prioritize, [n] add, [t] triage, [w] work, [q] quit")
+        print("Cmds: [N] prioritize, [n] add, [t] triage, [w] focus, [q] quit")
 
     def update_timer_ui(self):
         """Minimal redraw of just the header to preserve terminal selection."""
@@ -1036,7 +1036,7 @@ class DeepWorkCLI:
             timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
 
             sys.stdout.write("\033[1;1H" + f"\033[K--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
-        elif self.mode == "WORK":
+        elif self.mode == "FOCUS":
             if not self.triage_stack: return
             if self.task_start_time is None: self.task_start_time = now
             if self.focus_start_time is None: self.focus_start_time = now
@@ -1073,7 +1073,7 @@ class DeepWorkCLI:
                     mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
 
             color = "\033[1;34m"
-            header = " MINI TASK SESSION " if is_mini_session else " DEEP WORK SESSION "
+            header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
             if focus_elapsed > self.focus_threshold:
                 color = "\033[1;31;7m"
                 header = " !!! FOCUS LIMIT EXCEEDED !!! "
@@ -1139,7 +1139,7 @@ class DeepWorkCLI:
                     is_expired = (elapsed_break >= self.break_duration * 60)
 
                 is_exceeded = False
-                if self.mode == "WORK" and self.focus_start_time:
+                if self.mode == "FOCUS" and self.focus_start_time:
                     focus_elapsed = now - self.focus_start_time
                     is_exceeded = (focus_elapsed > self.focus_threshold)
 
@@ -1156,8 +1156,8 @@ class DeepWorkCLI:
                     sys.stdout.write("\033[H\033[J")
                     if self.mode == "TRIAGE":
                         self.render_triage()
-                    elif self.mode == "WORK":
-                        self.render_work()
+                    elif self.mode == "FOCUS":
+                        self.render_focus()
                     elif self.mode == "BREAK":
                         self.render_break()
                     elif self.mode == "EXIT":
@@ -1176,22 +1176,22 @@ class DeepWorkCLI:
                     last_exceeded = is_exceeded
 
                 elif current_second != last_render_second:
-                    if self.mode in ["WORK", "BREAK", "TRIAGE"]:
+                    if self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
                         self.update_timer_ui()
                     last_render_second = current_second
 
-                if self.mode in ["WORK", "BREAK", "TRIAGE"]:
+                if self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
                     self.check_chime()
 
-                if self.mode in ["WORK", "BREAK"]:
+                if self.mode in ["FOCUS", "BREAK"]:
                     self.check_meetings()
-                    if self.mode == "WORK":
+                    if self.mode == "FOCUS":
                         self.update_mini_timer()
 
                 rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
                 if rlist:
                     char = sys.stdin.read(1)
-                    if char == ' ' and self.mode == "WORK" and self.mini_timer_active and not buffer:
+                    if char == ' ' and self.mode == "FOCUS" and self.mini_timer_active and not buffer:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
                         self.mini_timer_last_tick = time.time()
                         self.mini_timer_last_chime_timestamp = 0
@@ -1274,7 +1274,7 @@ class DeepWorkCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [b#] break, [w] work, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [b#] break, [w] focus, [q] quit")
 
     def render_exit(self):
         summary = self.get_daily_summary()
@@ -1285,7 +1285,7 @@ class DeepWorkCLI:
         print("="*35)
         self.last_msg = "Enter 'q' to quit or 'f' to return to Free Write..."
 
-    def render_work(self):
+    def render_focus(self):
         if not self.triage_stack:
             return
         
@@ -1347,7 +1347,7 @@ class DeepWorkCLI:
                 mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
 
         color = "\033[1;34m"
-        header = " MINI TASK SESSION " if is_mini_session else " DEEP WORK SESSION "
+        header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
         if focus_elapsed > self.focus_threshold:
             color = "\033[1;31;7m"
             header = " !!! FOCUS LIMIT EXCEEDED !!! "
@@ -1411,8 +1411,8 @@ class DeepWorkCLI:
                     else:
                         self.commit_to_ledger("Interrupted", [])
                 else:
-                    if self.mode in ["WORK", "BREAK"]:
-                        self.commit_to_ledger("Work Session Complete", [])
+                    if self.mode in ["FOCUS", "BREAK"]:
+                        self.commit_to_ledger("Focus Session Complete", [])
                     else:
                         self.commit_to_ledger("Triage", [])
                 self.mode = "EXIT"
@@ -1426,13 +1426,13 @@ class DeepWorkCLI:
                 if self.focus_start_time is None: self.focus_start_time = time.time()
                 return
 
-            if base_cmd == 'f' and self.mode in ["WORK", "TRIAGE"]:
+            if base_cmd == 'f' and self.mode in ["FOCUS", "TRIAGE"]:
                 self.enter_free_write()
                 return "REDRAW"
 
-            if base_cmd == 'n' and self.mode in ["WORK", "BREAK", "TRIAGE"]:
+            if base_cmd == 'n' and self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
                 context = None
-                if self.mode in ["WORK", "BREAK"] and self.triage_stack:
+                if self.mode in ["FOCUS", "BREAK"] and self.triage_stack:
                     top_task = self.triage_stack[0]
                     focus_item, _, focus_path = self._get_recursive_focus(top_task)
 
@@ -1475,7 +1475,7 @@ class DeepWorkCLI:
                         self.triage_stack.extend(new_tasks)
                         self.last_msg = "Task(s) Added" if new_tasks else "Note(s) Added"
 
-                if base_cmd_orig == 'N' and self.mode == "WORK":
+                if base_cmd_orig == 'N' and self.mode == "FOCUS":
                     if self.mini_timer_active:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
                         self.mini_timer_last_tick = time.time()
@@ -1487,14 +1487,14 @@ class DeepWorkCLI:
 
             if self.mode == "BREAK":
                 if base_cmd == 'w':
-                    self._transition_from_break_to_work()
+                    self._transition_from_break_to_focus()
                     return
                 elif base_cmd == 'b':
                     self.last_msg = "Break time overload! Doing nothing."
                     self.break_quote = random.choice(BREAK_QUOTES)
                     return
                 elif base_cmd in ['n', 'N']:
-                    pass # Handled by shared WORK/BREAK logic
+                    pass # Handled by shared FOCUS/BREAK logic
                 elif base_cmd in ['t', 'q']:
                     pass # Handled by common logic
                 else:
@@ -1521,7 +1521,7 @@ class DeepWorkCLI:
                     items_to_write = active if active != self.initial_stack else []
                     self.commit_to_ledger("Triage", items_to_write)
                     self.triage_stack = active
-                    self.mode = "WORK"; self.last_msg = ""
+                    self.mode = "FOCUS"; self.last_msg = ""
                     if self.mini_timer_active:
                         self.mini_timer_last_tick = time.time()
                     self.last_chime_timestamp = 0
@@ -1579,7 +1579,7 @@ class DeepWorkCLI:
                     if self._handle_defer_command(base_cmd, parts):
                         return
 
-            elif self.mode in ["WORK", "BREAK"]:
+            elif self.mode in ["FOCUS", "BREAK"]:
                 if not self.triage_stack:
                     if base_cmd == 'q':
                         return "QUIT"
@@ -1590,7 +1590,7 @@ class DeepWorkCLI:
                 focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
                 is_note = not focus_item['line'].startswith('[]')
 
-                if base_cmd == 'b' and self.mode == "WORK":
+                if base_cmd == 'b' and self.mode == "FOCUS":
                     duration = 5
                     if len(parts) > 1:
                         try:
@@ -1620,7 +1620,7 @@ class DeepWorkCLI:
                         self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
 
-                if base_cmd == 'm' and self.mode == "WORK":
+                if base_cmd == 'm' and self.mode == "FOCUS":
                     if len(parts) > 1:
                         try:
                             duration = int(parts[1])
@@ -1720,8 +1720,8 @@ class DeepWorkCLI:
                     self.task_start_time = None
                     self.initial_stack = copy.deepcopy(self.triage_stack)
 
-                    if not self.triage_stack and self.mode == "WORK":
-                        self.commit_to_ledger("Work Session Complete", [])
+                    if not self.triage_stack and self.mode == "FOCUS":
+                        self.commit_to_ledger("Focus Session Complete", [])
                         self.mode = "EXIT"
                         return "REDRAW"
 
@@ -1730,4 +1730,4 @@ class DeepWorkCLI:
         return None
 
 if __name__ == "__main__":
-    DeepWorkCLI().run()
+    FocusCLI().run()

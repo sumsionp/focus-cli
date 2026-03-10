@@ -87,5 +87,16 @@ class TestOneLineAdd(unittest.TestCase):
         # "    [] Sub Sub 1" (4 spaces) -> "  [] Sub Sub 1" (2 spaces)
         self.assertEqual(self.cli.triage_stack[0]['notes'], ["  [] Sub Sub 1"])
 
+    def test_n_unbalanced_quotes(self):
+        self.cli.mode = "TRIAGE"
+        self.cli.triage_stack = []
+
+        # Missing closing quote
+        self.cli.handle_command('n "[] My task')
+
+        self.assertEqual(len(self.cli.triage_stack), 1)
+        self.assertEqual(self.cli.triage_stack[0]['line'], "[] My task")
+        self.assertEqual(self.cli.last_msg, "Task(s) Added (Note: Added missing closing quote.)")
+
 if __name__ == '__main__':
     unittest.main()

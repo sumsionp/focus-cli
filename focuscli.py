@@ -722,12 +722,12 @@ class FocusCLI:
 
         if hier_items:
             any_changed = True
+            msg = "Sub-item(s) Added"
             if self.mode == "TRIAGE":
                 # User expects leading subtasks in Triage Mode to target the first task in the stack
                 target = self.triage_stack[0]
                 self._insert_hierarchical_batch(target, [], hier_items, base_cmd_orig)
                 self.commit_to_ledger(mode_label, [target])
-                self.last_msg = "Sub-item(s) Added"
             else:
                 # Reverse items for 'N' to maintain original order when prepending/inserting before
                 items_to_process = reversed(hier_items) if base_cmd_orig == 'N' else hier_items
@@ -756,9 +756,13 @@ class FocusCLI:
 
                 self.commit_to_ledger(mode_label, [top_task])
                 self.last_recorded_focus = top_task['line'].strip()
-                self.last_msg = "Sub-item(s) Added"
                 if base_cmd_orig == 'N':
                     self.task_start_time = None
+
+            if self.last_msg.startswith("Note:"):
+                self.last_msg = f"{msg} ({self.last_msg})"
+            else:
+                self.last_msg = msg
 
         if top_level_items:
             any_changed = True
@@ -780,10 +784,18 @@ class FocusCLI:
                     self.last_recorded_focus = self.triage_stack[0]['line'].strip()
                     self.task_start_time = None
 
-                self.last_msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
+                msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
+                if self.last_msg.startswith("Note:"):
+                    self.last_msg = f"{msg} ({self.last_msg})"
+                else:
+                    self.last_msg = msg
             else:
                 self.triage_stack.extend(top_level_tasks)
-                self.last_msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
+                msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
+                if self.last_msg.startswith("Note:"):
+                    self.last_msg = f"{msg} ({self.last_msg})"
+                else:
+                    self.last_msg = msg
 
         return any_changed
 
@@ -1465,8 +1477,16 @@ class FocusCLI:
             try:
                 parts = shlex.split(cmd_clean)
             except ValueError:
-                # Fallback for unbalanced quotes
-                parts = cmd_clean.split()
+                # Handle unbalanced quotes by appending a closing quote if possible
+                if '"' in cmd_clean:
+                    try:
+                        parts = shlex.split(cmd_clean + '"')
+                        self.last_msg = "Note: Added missing closing quote."
+                    except ValueError:
+                        self.last_msg = "Error: Unbalanced quotes."
+                        return
+                else:
+                    parts = cmd_clean.split()
 
             if self.mode == "EXIT":
                 if not parts or parts[0].lower() == 'q':
@@ -1558,14 +1578,23 @@ class FocusCLI:
                         for it in reversed(top_level_tasks):
                             self.triage_stack.insert(0, it)
 
-                        self.last_msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
+                        msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
+                        if self.last_msg.startswith("Note:"):
+                             self.last_msg = f"{msg} ({self.last_msg})"
+                        else:
+                             self.last_msg = msg
+
                         self.task_start_time = None
                         if top_level_tasks and self.triage_stack:
                             # Update focus tracking to the newly prioritized task
                             self.last_recorded_focus = self.triage_stack[0]['line'].strip()
                     else:
                         self.triage_stack.extend(top_level_tasks)
-                        self.last_msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
+                        msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
+                        if self.last_msg.startswith("Note:"):
+                             self.last_msg = f"{msg} ({self.last_msg})"
+                        else:
+                             self.last_msg = msg
 
                 if base_cmd_orig == 'N' and self.mode == "FOCUS":
                     if self.mini_timer_active:

@@ -764,23 +764,26 @@ class FocusCLI:
             any_changed = True
             # Handle top-level items using standard stack logic
             self.commit_to_ledger(mode_label, top_level_items)
-            new_tasks = [it for it in top_level_items if it['line'].strip().startswith('[]')]
+
+            # Filter only items that are tasks (start with []) to add to the triage stack
+            top_level_tasks = [it for it in top_level_items if it['line'].strip().startswith('[]')]
+
             if base_cmd_orig == 'N':
                 # If we also had hierarchical items, and they targeted index 0 (N always does),
                 # we insert new top-level tasks at index 1 to preserve focus on the original task.
                 insert_idx = 1 if (hier_items and self.triage_stack) else 0
 
-                for it in reversed(new_tasks):
+                for it in reversed(top_level_tasks):
                     self.triage_stack.insert(insert_idx, it)
 
-                if insert_idx == 0 and new_tasks:
+                if insert_idx == 0 and top_level_tasks:
                     self.last_recorded_focus = self.triage_stack[0]['line'].strip()
                     self.task_start_time = None
 
-                self.last_msg = "Task(s) Added & Prioritized" if new_tasks else "Note(s) Added"
+                self.last_msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
             else:
-                self.triage_stack.extend(new_tasks)
-                self.last_msg = "Task(s) Added" if new_tasks else "Note(s) Added"
+                self.triage_stack.extend(top_level_tasks)
+                self.last_msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
 
         return any_changed
 
@@ -1220,7 +1223,7 @@ class FocusCLI:
                 )
 
                 if structural_change:
-                    sys.stdout.write("\033[H\033[J")
+                    sys.stdout.write("\033[H\033[2J")
                     if self.mode == "TRIAGE":
                         self.render_triage()
                     elif self.mode == "FOCUS":
@@ -1288,7 +1291,16 @@ class FocusCLI:
                         buffer = buffer[:-1]
                     elif ord(char) == 3: # Ctrl+C
                         raise KeyboardInterrupt
-                    else:
+                    elif ord(char) == 27: # ESC sequence
+                        # Read and discard next two chars of a typical escape sequence like [A, [D etc.
+                        # This prevents them from entering the buffer and causing redraw glitches.
+                        r, _, _ = select.select([sys.stdin], [], [], 0.01)
+                        if r:
+                            sys.stdin.read(1) # [
+                            r, _, _ = select.select([sys.stdin], [], [], 0.01)
+                            if r:
+                                sys.stdin.read(1) # A, B, C, D...
+                    elif ord(char) >= 32: # Only printable characters
                         buffer += char
         except KeyboardInterrupt:
             self._rescue_stack("Interrupted")
@@ -1450,7 +1462,11 @@ class FocusCLI:
     def handle_command(self, cmd):
         try:
             cmd_clean = re.sub(r'^([a-zA-Z])(\d)', r'\1 \2', cmd)
-            parts = cmd_clean.split()
+            try:
+                parts = shlex.split(cmd_clean)
+            except ValueError:
+                # Fallback for unbalanced quotes
+                parts = cmd_clean.split()
 
             if self.mode == "EXIT":
                 if not parts or parts[0].lower() == 'q':
@@ -1498,26 +1514,34 @@ class FocusCLI:
                 return "REDRAW"
 
             if base_cmd == 'n' and self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
-                context = None
-                if self.mode in ["FOCUS", "BREAK"] and self.triage_stack:
-                    top_task = self.triage_stack[0]
-                    focus_item, _, focus_path = self._get_recursive_focus(top_task)
+                if len(parts) > 1:
+                    # One-line addition
+                    line = parts[1]
+                    m = re.match(r'^(\s*)', line)
+                    indent_len = len(m.group(1))
+                    content = line[indent_len:]
+                    items = [{'line': content, 'notes': [], 'indent': indent_len}]
+                else:
+                    context = None
+                    if self.mode in ["FOCUS", "BREAK"] and self.triage_stack:
+                        top_task = self.triage_stack[0]
+                        focus_item, _, focus_path = self._get_recursive_focus(top_task)
 
-                    # Building hierarchical context string (just the focused item)
-                    context = []
-                    if focus_path:
-                        # Find the indentation of the focus item
-                        indent = ""
-                        curr = top_task
-                        for idx in focus_path:
-                            sub, _ = self._get_subtask_as_item(curr, idx)
-                            # Every subtask is 2 spaces deeper than its parent line
-                            indent += "  "
-                            curr = sub
-                        context.append(f"{indent}{focus_item['line']}")
+                        # Building hierarchical context string (just the focused item)
+                        context = []
+                        if focus_path:
+                            # Find the indentation of the focus item
+                            indent = ""
+                            curr = top_task
+                            for idx in focus_path:
+                                sub, _ = self._get_subtask_as_item(curr, idx)
+                                # Every subtask is 2 spaces deeper than its parent line
+                                indent += "  "
+                                curr = sub
+                            context.append(f"{indent}{focus_item['line']}")
 
-                lines = self._get_multi_line_input(context_lines=context)
-                items = self._process_multi_line_input(lines)
+                    lines = self._get_multi_line_input(context_lines=context)
+                    items = self._process_multi_line_input(lines)
 
                 if not items:
                     return
@@ -1526,21 +1550,22 @@ class FocusCLI:
                     # Top-level stack addition/prioritization
                     mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
                     self.commit_to_ledger(mode_label, items)
-                    new_tasks = [it for it in items if it['line'].strip().startswith('[]')]
+
+                    # Filter only items that are tasks (start with []) to add to the triage stack
+                    top_level_tasks = [it for it in items if it['line'].strip().startswith('[]')]
 
                     if base_cmd_orig == 'N':
-                        for it in reversed(new_tasks):
+                        for it in reversed(top_level_tasks):
                             self.triage_stack.insert(0, it)
-                        self.last_msg = "Task(s) Added & Prioritized" if new_tasks else "Note(s) Added"
+
+                        self.last_msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
                         self.task_start_time = None
-                        if new_tasks:
+                        if top_level_tasks and self.triage_stack:
                             # Update focus tracking to the newly prioritized task
                             self.last_recorded_focus = self.triage_stack[0]['line'].strip()
-                        else:
-                            self.last_recorded_focus = None
                     else:
-                        self.triage_stack.extend(new_tasks)
-                        self.last_msg = "Task(s) Added" if new_tasks else "Note(s) Added"
+                        self.triage_stack.extend(top_level_tasks)
+                        self.last_msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
 
                 if base_cmd_orig == 'N' and self.mode == "FOCUS":
                     if self.mini_timer_active:

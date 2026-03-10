@@ -48,8 +48,8 @@ Entered automatically after the initial Free Write session or by using the `t` c
 - `e <idx>`: **Edit.** Opens the item and its sub-items in `vi` for editing.
 - `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`.
 - `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
-- `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes. Indented leading items are attached to the first task in the stack. New top-level tasks are inserted at the top.
-- `n`: **Add.** Opens `vi` to add one or more tasks/notes. Indented leading items are attached to the first task in the stack. New top-level tasks are appended to the end.
+- `N`: **Prioritize.** Opens `vi` to add tasks/notes. Supports one-line addition: `N "[] Task"`. New top-level tasks are inserted at the top.
+- `n`: **Add.** Opens `vi` to add tasks/notes. Supports one-line addition: `n "[] Task"`. New top-level tasks are appended to the end.
 - `b <mins>`: **Break.** Enters Break Mode.
 - `w`: **Focus.** Commits the triage session and enters Focus Mode.
 - `q`: **Quit.** Exits the CLI.
@@ -75,8 +75,8 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`. After editing, you return to Triage Mode.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
-- `N`: **Prioritize.** Opens `vi` to add tasks/notes. Indented items are added relative to the current focus path. In mixed batches (sub-items for focus AND new top-level tasks), focus is preserved on the current task, and new top-level tasks are inserted at index 1 (as the next task).
-- `n`: **Add.** Opens `vi` to add tasks/notes. Indented items are added relative to the current focus path. New top-level tasks are appended to the end of the stack.
+- `N`: **Prioritize.** Opens `vi` to add tasks/notes. Supports one-line addition: `N "[] Task"`. Indented items are added relative to current focus. New top-level tasks are inserted at index 1.
+- `n`: **Add.** Opens `vi` to add tasks/notes. Supports one-line addition: `n "[] Task"`. Indented items are added relative to current focus. New top-level tasks are appended to the end.
 - `b <mins>`: **Break.** Enters Break Mode for specified minutes (default 5).
 - `i`: **Ignore.** Skips the current item (marks as cancelled if it's a task).
 - `t`: **Triage.** Returns to Triage Mode.
@@ -102,6 +102,14 @@ If a scheduled meeting starts while you are on a break, the UI will turn red, a 
 - `n`: **Add.** Add notes or tasks during your break.
 - `t`: **Triage.** Return to Triage mode.
 - `q`: **Quit.** Exits the CLI.
+
+### Input Navigation
+When entering commands or one-line tasks, the following keys are supported:
+- **Left/Right Arrows:** Move cursor within the buffer.
+- **Home / Ctrl+A:** Jump to the start of the line.
+- **End / Ctrl+E:** Jump to the end of the line.
+- **Delete / Ctrl+D:** Delete character at cursor.
+- **Backspace:** Remove character before cursor (supports wrapped lines).
 
 ## Markers
 The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM/PM`):

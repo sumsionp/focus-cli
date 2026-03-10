@@ -1174,6 +1174,35 @@ class FocusCLI:
         sys.stdout.write("\033[u") # Restore cursor
         sys.stdout.flush()
 
+    def _read_keypress(self, fd):
+        """Reads a single keypress or escape sequence burst."""
+        try:
+            b = os.read(fd, 1)
+            if not b: return None
+            if b == b'\x1b':
+                # burst read for escape sequences
+                seq = b
+                while True:
+                    r, _, _ = select.select([fd], [], [], 0.02)
+                    if r:
+                        next_b = os.read(fd, 1)
+                        if not next_b: break
+                        seq += next_b
+                        # CSI terminators are 0x40-0x7E
+                        if len(seq) >= 3 and seq[1:2] == b'[' and (0x40 <= seq[-1] <= 0x7E):
+                            break
+                        # SS3 terminators
+                        if len(seq) == 3 and seq[1:2] == b'O':
+                            break
+                        if len(seq) > 10: break
+                    else:
+                        break
+                return seq.decode('utf-8', errors='ignore')
+            else:
+                return b.decode('utf-8', errors='ignore')
+        except Exception:
+            return None
+
     def run(self):
         fd = sys.stdin.fileno()
         self.original_termios = termios.tcgetattr(fd)
@@ -1281,9 +1310,11 @@ class FocusCLI:
                     if self.mode == "FOCUS":
                         self.update_mini_timer()
 
-                rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                rlist, _, _ = select.select([fd], [], [], 0.1)
                 if rlist:
-                    char = sys.stdin.read(1)
+                    char = self._read_keypress(fd)
+                    if not char: continue
+
                     if char == ' ' and self.mode == "FOCUS" and self.mini_timer_active and not buffer:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
                         self.mini_timer_last_tick = time.time()
@@ -1316,41 +1347,33 @@ class FocusCLI:
                         if cursor_pos > 0:
                             buffer = buffer[:cursor_pos-1] + buffer[cursor_pos:]
                             cursor_pos -= 1
-                    elif ord(char) == 3: # Ctrl+C
+                    elif char == '\x03': # Ctrl+C
                         raise KeyboardInterrupt
-                    elif ord(char) == 27: # ESC sequence
+                    elif char.startswith('\x1b'): # ESC sequence
                         seq = char
-                        # Wait longer for the rest of the sequence
-                        while True:
-                            rlist_seq, _, _ = select.select([sys.stdin], [], [], 0.05)
-                            if rlist_seq:
-                                next_char = sys.stdin.read(1)
-                                seq += next_char
-                                # Stop reading if we hit a likely terminator
-                                if next_char in 'ABCDEFGHHJKLMOPRSTU~': break
-                                if len(seq) > 8: break
-                            else:
-                                break
-
                         if seq in ['\x1b[D', '\x1bOD']: # Left Arrow
                             if cursor_pos > 0: cursor_pos -= 1
                         elif seq in ['\x1b[C', '\x1bOC']: # Right Arrow
                             if cursor_pos < len(buffer): cursor_pos += 1
-                        elif seq in ['\x1b[H', '\x1bOH']: # Home
+                        elif seq in ['\x1b[H', '\x1b[1~', '\x1bOH']: # Home
                             cursor_pos = 0
-                        elif seq in ['\x1b[F', '\x1bOF']: # End
+                        elif seq in ['\x1b[F', '\x1b[4~', '\x1bOF']: # End
                             cursor_pos = len(buffer)
+                        elif seq in ['\x1b[A', '\x1bOA', '\x1b[B', '\x1bOB']: # Up/Down Arrows
+                            pass # Just swallow them
                         elif seq in ['\x1b[3~']: # Delete
                             if cursor_pos < len(buffer):
                                 buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
-                    elif ord(char) == 1: # Ctrl+A (Home)
+                        else:
+                            logging.info(f"Unhandled escape sequence: {repr(seq)}")
+                    elif char == '\x01': # Ctrl+A (Home)
                         cursor_pos = 0
-                    elif ord(char) == 5: # Ctrl+E (End)
+                    elif char == '\x05': # Ctrl+E (End)
                         cursor_pos = len(buffer)
-                    elif ord(char) == 4: # Ctrl+D (Delete)
+                    elif char == '\x04': # Ctrl+D (Delete)
                         if cursor_pos < len(buffer):
                             buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
-                    elif ord(char) >= 32: # Only printable characters
+                    elif len(char) == 1 and ord(char) >= 32: # Only printable characters
                         buffer = buffer[:cursor_pos] + char + buffer[cursor_pos:]
                         cursor_pos += 1
         except KeyboardInterrupt:

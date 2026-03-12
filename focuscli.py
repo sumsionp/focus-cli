@@ -184,25 +184,62 @@ class FocusCLI:
         self.break_meeting_interrupted = False
 
     def get_daily_summary(self):
-        counts = {'[x]': 0, '[-]': 0, '[>]': 0}
+        """Returns a dictionary of counts for top-level tasks and subtasks."""
+        counts = {
+            'top': {'[x]': 0, '[-]': 0, '[>]': 0},
+            'sub': {'[x]': 0, '[-]': 0, '[>]': 0}
+        }
         if not os.path.exists(FILENAME): return counts
 
-        seen_tasks = set()
+        latest_states = {} # full_path_key -> (state, level)
+
         with open(FILENAME, 'r') as f:
             lines = f.readlines()
-            for line in reversed(lines):
-                clean = line.strip()
-                if not clean or "-------" in clean or line.startswith('  '):
-                    continue
 
-                marker_match = re.match(r'^\[([xe\->\s]?)\]', clean)
-                if marker_match:
-                    state = marker_match.group(1)
-                    content = clean[marker_match.end():].strip()
-                    if content not in seen_tasks:
-                        if state in ['x', '-', '>']:
-                            counts[f'[{state}]'] += 1
-                        seen_tasks.add(content)
+        stack = [] # current hierarchy of content strings
+
+        for line in lines:
+            line_raw = line.rstrip('\n\r')
+            if not line_raw.strip() or "-------" in line_raw:
+                continue
+
+            m = re.match(r'^(\s*)', line_raw)
+            indent = len(m.group(1)) if m else 0
+            clean = line_raw.strip()
+            level = indent // 2
+
+            # Adjust stack to current level
+            if level < len(stack):
+                stack = stack[:level]
+            while len(stack) < level:
+                stack.append("") # Fill gaps
+
+            marker_match = re.match(r'^\[([xe\->\s]?)\]', clean)
+            if marker_match:
+                state = marker_match.group(1).strip()
+                if not state: state = 'pending'
+                content = clean[marker_match.end():].strip()
+
+                # Build a unique key based on parent path
+                parent_path = " > ".join(stack)
+                full_key = f"{parent_path} > {content}" if parent_path else content
+
+                latest_states[full_key] = (state, level)
+                stack.append(content)
+            else:
+                # It's a note; still update stack as it can be a parent
+                content = clean
+                stack.append(content)
+
+        for key, (state, level) in latest_states.items():
+            if state in ['x', '-', '>']:
+                label = f"[{state}]"
+                if level == 0:
+                    if label in counts['top']:
+                        counts['top'][label] += 1
+                else:
+                    if label in counts['sub']:
+                        counts['sub'][label] += 1
         return counts
 
     def _run_with_vi(self, args):
@@ -887,7 +924,7 @@ class FocusCLI:
         if parent_item is None:
             # Top-level progress
             summary = self.get_daily_summary()
-            completed = sum(summary.values())
+            completed = sum(summary['top'].values())
             pending = 0
             for it in self.triage_stack:
                 if it['line'].strip().startswith('[]') or it['line'].strip().startswith('[ ]'):
@@ -1472,9 +1509,22 @@ class FocusCLI:
     def render_exit(self):
         summary = self.get_daily_summary()
         print(f"\n\033[1;32mDAILY SCORECARD ({os.path.basename(FILENAME)})\033[0m")
-        print(f"  Finished  [x]: {summary['[x]']}")
-        print(f"  Cancelled [-]: {summary['[-]']}")
-        print(f"  Deferred  [>]: {summary['[>]']}")
+
+        # Finished [x]
+        print(f"  Finished  [x]: {summary['top']['[x]'] + summary['sub']['[x]']}")
+        print(f"    - Top-level: {summary['top']['[x]']}")
+        print(f"    - Subtasks:  {summary['sub']['[x]']}")
+
+        # Cancelled [-]
+        print(f"  Cancelled [-]: {summary['top']['[-]'] + summary['sub']['[-]']}")
+        print(f"    - Top-level: {summary['top']['[-]']}")
+        print(f"    - Subtasks:  {summary['sub']['[-]']}")
+
+        # Deferred [>]
+        print(f"  Deferred  [>]: {summary['top']['[>]'] + summary['sub']['[>]']}")
+        print(f"    - Top-level: {summary['top']['[>]']}")
+        print(f"    - Subtasks:  {summary['sub']['[>]']}")
+
         print("="*35)
         self.last_msg = "Enter 'q' to quit or 'f' to return to Free Write..."
 

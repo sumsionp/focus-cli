@@ -116,6 +116,14 @@ When entering commands or one-line tasks, the following keys are supported:
 - **Delete / Ctrl+D:** Delete character at cursor.
 - **Backspace:** Remove character before cursor (supports wrapped lines).
 
+## Daily Scorecard
+When you exit the CLI (via `q`), a **Daily Scorecard** is displayed. This provides a summary of your productivity for the session, categorized by:
+- **Finished [x]:** Total tasks completed.
+- **Cancelled [-]:** Total tasks cancelled.
+- **Deferred [>]:** Total tasks deferred to another day or later in the stack.
+
+Each category includes a detailed breakdown of **Top-level tasks** and **Subtasks**. Subtasks are uniquely identified by their parent path to ensure accurate counting even if multiple projects have subtasks with the same name (e.g., "Review").
+
 ## Markers
 The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM/PM`):
 - `------- Free Write <Timestamp> -------`

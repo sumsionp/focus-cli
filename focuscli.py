@@ -692,9 +692,13 @@ class FocusCLI:
 
         return False
 
-    def _handle_hierarchical_new_items(self, base_cmd_orig, items):
+    def _handle_hierarchical_new_items(self, base_cmd_orig, items, target_index=None):
         """Processes a batch of items and inserts them into the task tree based on absolute indentation."""
-        mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
+        if target_index is not None:
+            mode_label = f"New Entry(s) at index {target_index}"
+        else:
+            mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
+
         any_changed = False
 
         # Separate items into top-level (indent 0) and hierarchical (indent > 0)
@@ -703,73 +707,109 @@ class FocusCLI:
 
         if hier_items and self.triage_stack:
             any_changed = True
-            # Determine focus info
-            top_task = self.triage_stack[0]
 
-            if self.mode in ["TRIAGE"]:
-                focus_path = []
-                focus_indents = [0]
-            else:
-                _, _, focus_path = self._get_recursive_focus(top_task)
-                # Calculate absolute indentation of focus path elements
-                focus_indents = [0] # Top-level task is 0
-                curr = top_task
-                for idx in focus_path:
-                    sub, _ = self._get_subtask_as_item(curr, idx)
-                    focus_indents.append(focus_indents[-1] + 2)
-                    curr = sub
+            # Use target_index if provided, otherwise default to 0
+            idx = target_index if target_index is not None else 0
 
-            msg = "Sub-item(s) Added"
-            if self.mode == "TRIAGE":
-                # User expects leading subtasks in Triage Mode to target the first task in the stack
-                target = self.triage_stack[0]
-                self._insert_hierarchical_batch(target, [], hier_items, base_cmd_orig)
-                self.commit_to_ledger(mode_label, [target])
-            else:
-                # Reverse items for 'N' to maintain original order when prepending/inserting before
-                items_to_process = reversed(hier_items) if base_cmd_orig == 'N' else hier_items
-                for it in items_to_process:
-                    it_copy = copy.deepcopy(it)
-                    focus_indent = focus_indents[len(focus_path)]
+            if idx < len(self.triage_stack):
+                target_task = self.triage_stack[idx]
 
-                    depth_offset = (it['indent'] - focus_indent) // 2
-                    target_depth = len(focus_path) + depth_offset
-                    target_depth = max(0, min(len(focus_path) + 1, target_depth))
+                if self.mode in ["TRIAGE"] or target_index is not None:
+                    focus_path = []
+                    focus_indents = [0]
+                else:
+                    _, _, focus_path = self._get_recursive_focus(target_task)
+                    # Calculate absolute indentation of focus path elements
+                    focus_indents = [0] # Top-level task is 0
+                    curr = target_task
+                    for p_idx in focus_path:
+                        sub, _ = self._get_subtask_as_item(curr, p_idx)
+                        focus_indents.append(focus_indents[-1] + 2)
+                        curr = sub
 
-                    if target_depth > 0:
-                        it_copy['indent'] = it['indent'] - focus_indents[target_depth - 1] - 2
-                    else:
-                        it_copy['indent'] = it['indent']
+                msg = "Sub-item(s) Added"
+                if self.mode == "TRIAGE" or target_index is not None:
+                    # Target specific task in stack
+                    self._insert_hierarchical_batch(target_task, focus_path, hier_items, base_cmd_orig)
+                    self.commit_to_ledger(mode_label, [target_task])
+                else:
+                    # Focus mode recursive insertion
+                    # Reverse items for 'N' to maintain original order when prepending/inserting before
+                    items_to_process = reversed(hier_items) if base_cmd_orig == 'N' else hier_items
+                    for it in items_to_process:
+                        it_copy = copy.deepcopy(it)
+                        focus_indent = focus_indents[len(focus_path)]
 
-                    pos = 'before' if base_cmd_orig == 'N' else 'after'
-                    if target_depth == len(focus_path) + 1:
-                        # Child: ignore n/N for exact position, just append or prepend to notes
-                        child_pos = 'append' if base_cmd_orig == 'n' else 'prepend_notes'
-                        self._recursive_insert(top_task, focus_path, [it_copy], position=child_pos)
-                    else:
-                        # Sibling or higher
-                        target_path = focus_path[:target_depth]
-                        self._recursive_insert(top_task, target_path, [it_copy], position=pos)
+                        depth_offset = (it['indent'] - focus_indent) // 2
+                        target_depth = len(focus_path) + depth_offset
+                        target_depth = max(0, min(len(focus_path) + 1, target_depth))
 
-                self.commit_to_ledger(mode_label, [top_task])
-                self.last_recorded_focus = top_task['line'].strip()
-                if base_cmd_orig == 'N':
-                    self.task_start_time = None
+                        if target_depth > 0:
+                            it_copy['indent'] = it['indent'] - focus_indents[target_depth - 1] - 2
+                        else:
+                            it_copy['indent'] = it['indent']
 
-            if self.last_msg.startswith("Note:"):
-                self.last_msg = f"{msg} ({self.last_msg})"
-            else:
-                self.last_msg = msg
+                        pos = 'before' if base_cmd_orig == 'N' else 'after'
+                        if target_depth == len(focus_path) + 1:
+                            # Child: ignore n/N for exact position, just append or prepend to notes
+                            child_pos = 'append' if base_cmd_orig == 'n' else 'prepend_notes'
+                            self._recursive_insert(target_task, focus_path, [it_copy], position=child_pos)
+                        else:
+                            # Sibling or higher
+                            target_path = focus_path[:target_depth]
+                            self._recursive_insert(target_task, target_path, [it_copy], position=pos)
+
+                    self.commit_to_ledger(mode_label, [target_task])
+                    self.last_recorded_focus = target_task['line'].strip()
+                    if base_cmd_orig == 'N':
+                        self.task_start_time = None
+
+                if self.last_msg.startswith("Note:"):
+                    self.last_msg = f"{msg} ({self.last_msg})"
+                else:
+                    self.last_msg = msg
 
         if top_level_items:
             any_changed = True
             # Handle top-level items using standard stack logic
+            # (Notes are committed here but not added to triage_stack)
             self.commit_to_ledger(mode_label, top_level_items)
 
             # Filter only items that are tasks (start with []) to add to the triage stack
             top_level_tasks = [it for it in top_level_items if it['line'].strip().startswith('[]')]
 
-            if base_cmd_orig == 'N':
+            # If we have top-level notes that aren't tasks, and we ARE in N1-style indexed mode,
+            # they were already committed to the ledger above but should NOT be added to stack.
+            # If we are in standard N/n mode, the original behavior for notes was...
+            # Wait, let's check N/n behavior for notes.
+            # In N mode: top_level_tasks are inserted at index 0. Notes are lost from stack but kept in ledger?
+            # Actually, current code for 'N':
+            # msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
+            # It only adds top_level_tasks to self.triage_stack.
+
+            if target_index is not None:
+                # Specified index insertion
+                insert_idx = target_index
+                if hier_items and target_index < len(self.triage_stack):
+                    # If we also added sub-items to an existing task, insert new tasks AFTER it
+                    insert_idx += 1
+
+                # Cap insertion index at current stack size
+                insert_idx = min(insert_idx, len(self.triage_stack))
+
+                for it in reversed(top_level_tasks):
+                    self.triage_stack.insert(insert_idx, it)
+
+                if insert_idx == 0 and top_level_tasks:
+                    self.last_recorded_focus = self.triage_stack[0]['line'].strip()
+                    self.task_start_time = None
+
+                msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
+                if self.last_msg.startswith("Note:"):
+                    self.last_msg = f"{msg} ({self.last_msg})"
+                else:
+                    self.last_msg = msg
+            elif base_cmd_orig == 'N':
                 # If we also had hierarchical items, and they targeted index 0 (N always does),
                 # we insert new top-level tasks at index 1 to preserve focus on the original task.
                 insert_idx = 1 if (hier_items and self.triage_stack) else 0
@@ -1096,7 +1136,7 @@ class FocusCLI:
         print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
 
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [N] prioritize, [n] add, [t] triage, [w] focus, [q] quit")
+        print("Cmds: [N#] prioritize, [n#] add, [t] triage, [w] focus, [q] quit")
 
     def update_timer_ui(self):
         """Minimal redraw of just the header to preserve terminal selection."""
@@ -1427,7 +1467,7 @@ class FocusCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [b#] break, [w] focus, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N#] prioritize, [n#] add, [>>] defer all, [b#] break, [w] focus, [q] quit")
 
     def render_exit(self):
         summary = self.get_daily_summary()
@@ -1531,7 +1571,7 @@ class FocusCLI:
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
         extra_cmds = ", [Space] reset" if is_mini_session else ""
-        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f] free write, [m#] mini{extra_cmds}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
+        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f] free write, [m#] mini{extra_cmds}, [N#] prioritize, [n#] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         self.last_msg = "" # Reset status message
@@ -1596,43 +1636,60 @@ class FocusCLI:
                 self.enter_free_write()
                 return "REDRAW"
 
-            if base_cmd == 'n' and self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
-                if len(parts) > 1:
-                    # One-line addition
-                    line = parts[1]
-                    m = re.match(r'^(\s*)', line)
-                    indent_len = len(m.group(1))
-                    content = line[indent_len:]
-                    items = [{'line': content, 'notes': [], 'indent': indent_len}]
+            if (base_cmd == 'n' or base_cmd == 'N') and self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
+                target_idx = None
+                # Check for n# or N# pattern which was split into ['n', '#'] or ['N', '#']
+                if len(parts) > 1 and parts[1].isdigit():
+                    target_idx = int(parts[1])
+                    remaining_parts = parts[2:]
                 else:
-                    context = None
-                    if self.mode in ["FOCUS", "BREAK"] and self.triage_stack:
-                        top_task = self.triage_stack[0]
-                        focus_item, _, focus_path = self._get_recursive_focus(top_task)
+                    remaining_parts = parts[1:]
 
-                        # Building hierarchical context string (just the focused item)
-                        context = []
-                        if focus_path:
-                            # Find the indentation of the focus item
-                            indent = ""
-                            curr = top_task
-                            for idx in focus_path:
-                                sub, _ = self._get_subtask_as_item(curr, idx)
-                                # Every subtask is 2 spaces deeper than its parent line
-                                indent += "  "
-                                curr = sub
-                            context.append(f"{indent}{focus_item['line']}")
+                items = []
+                if remaining_parts is not None:
+                    if remaining_parts:
+                        # One-line addition
+                        full_line = " ".join(remaining_parts)
+                        m = re.match(r'^(\s*)', full_line)
+                        indent_len = len(m.group(1))
+                        content = full_line[indent_len:]
+                        items = [{'line': content, 'notes': [], 'indent': indent_len}]
+                    else:
+                        context = None
+                        if (self.mode in ["FOCUS", "BREAK"] or target_idx is not None) and self.triage_stack:
+                            # Only show context if we are NOT targeting a specific index
+                            # OR if the index is 0 (current focus)
+                            if target_idx is None or target_idx == 0:
+                                top_task = self.triage_stack[0]
+                                focus_item, _, focus_path = self._get_recursive_focus(top_task)
 
-                    lines = self._get_multi_line_input(context_lines=context)
-                    items = self._process_multi_line_input(lines)
+                                # Building hierarchical context string (just the focused item)
+                                context = []
+                                if focus_path:
+                                    # Find the indentation of the focus item
+                                    indent = ""
+                                    curr = top_task
+                                    for idx in focus_path:
+                                        sub, _ = self._get_subtask_as_item(curr, idx)
+                                        # Every subtask is 2 spaces deeper than its parent line
+                                        indent += "  "
+                                        curr = sub
+                                    context.append(f"{indent}{focus_item['line']}")
+                            elif target_idx < len(self.triage_stack):
+                                # Context for targeting a specific task at an index
+                                target_task = self.triage_stack[target_idx]
+                                context = [target_task['line']]
 
-                if not items:
-                    return
+                        lines = self._get_multi_line_input(context_lines=context)
+                        items = self._process_multi_line_input(lines)
+
+                    if not items:
+                        return
 
                 # Delegate all addition logic to the hierarchical handler
-                self._handle_hierarchical_new_items(base_cmd_orig, items)
+                self._handle_hierarchical_new_items(base_cmd_orig, items, target_index=target_idx)
 
-                if base_cmd_orig == 'N' and self.mode == "FOCUS":
+                if (base_cmd_orig == 'N' or target_idx is not None) and self.mode == "FOCUS":
                     if self.mini_timer_active:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
                         self.mini_timer_last_tick = time.time()

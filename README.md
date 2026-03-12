@@ -49,7 +49,9 @@ Entered automatically after the initial Free Write session or by using the `t` c
 - `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`.
 - `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
 - `N`: **Prioritize.** Opens `vi` to add tasks/notes. Supports one-line addition: `N "[] Task"`. New top-level tasks are inserted at the top.
+- `N#`: **Prioritize at index.** Same as `N` but inserts new top-level tasks starting at index `#`. Leading sub-items target the task at index `#`.
 - `n`: **Add.** Opens `vi` to add tasks/notes. Supports one-line addition: `n "[] Task"`. New top-level tasks are appended to the end.
+- `n#`: **Add at index.** Identical to `N#`.
 - `b <mins>`: **Break.** Enters Break Mode.
 - `w`: **Focus.** Commits the triage session and enters Focus Mode.
 - `q`: **Quit.** Exits the CLI.
@@ -75,8 +77,10 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`. After editing, you return to Triage Mode.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
-- `N`: **Prioritize.** Opens `vi` to add tasks/notes. Supports one-line addition: `N "[] Task"`. Indented items are added relative to current focus. New top-level tasks are inserted at index 1.
+- `N`: **Prioritize.** Opens `vi` to add tasks/notes. Supports one-line addition: `N "[] Task"`. Indented items are added relative to current focus. New top-level tasks are inserted at index 0 (becoming the new focus).
+- `N#`: **Prioritize at index.** Same as `N` but inserts new top-level tasks starting at index `#`. Leading sub-items target the task at index `#`.
 - `n`: **Add.** Opens `vi` to add tasks/notes. Supports one-line addition: `n "[] Task"`. Indented items are added relative to current focus. New top-level tasks are appended to the end.
+- `n#`: **Add at index.** Identical to `N#`.
 - `b <mins>`: **Break.** Enters Break Mode for specified minutes (default 5).
 - `i`: **Ignore.** Skips the current item (marks as cancelled if it's a task).
 - `t`: **Triage.** Returns to Triage Mode.
@@ -99,7 +103,8 @@ If a scheduled meeting starts while you are on a break, the UI will turn red, a 
 
 **Commands:**
 - `w`: **Focus.** Resumes the Focus session.
-- `n`: **Add.** Add notes or tasks during your break.
+- `n` / `N`: **Add.** Add notes or tasks during your break.
+- `n#` / `N#`: **Add at index.** Add notes or tasks at a specific index.
 - `t`: **Triage.** Return to Triage mode.
 - `q`: **Quit.** Exits the CLI.
 

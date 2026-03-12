@@ -21,6 +21,7 @@ RECOGNIZED_LABELS = [
     "Focus Session Re-started at",
     "Break for",
     "New Entry",
+    "New Entry(s) at index",
     "Prioritized Task",
     "Deferred from last session",
     "Deferred",
@@ -65,6 +66,8 @@ def migrate_file(filepath):
                 label_for_check = "Break for"
             elif label_candidate.startswith("Deferred to"):
                 label_for_check = "Deferred to"
+            elif label_candidate.startswith("New Entry(s) at index"):
+                label_for_check = "New Entry(s) at index"
 
             if label_for_check not in RECOGNIZED_LABELS:
                 unrecognized.append((i + 1, line.strip()))

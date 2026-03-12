@@ -48,5 +48,15 @@ class TestSummary(unittest.TestCase):
         self.assertEqual(summary['sub']['[x]'], 1)
         self.assertEqual(summary['sub']['[-]'], 1)
 
+    def test_deferred_subtasks(self):
+        with open("test-plan.txt", "w") as f:
+            f.write("[] Project C\n")
+            f.write("  [>] Deferred Subtask\n")
+            f.write("[>] Project C\n")
+
+        summary = self.cli.get_daily_summary()
+        self.assertEqual(summary['top']['[>]'], 1)
+        self.assertEqual(summary['sub']['[>]'], 1)
+
 if __name__ == '__main__':
     unittest.main()

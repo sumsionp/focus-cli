@@ -187,7 +187,7 @@ class FocusCLI:
         """Returns a dictionary of counts for top-level tasks and subtasks."""
         counts = {
             'top': {'[x]': 0, '[-]': 0, '[>]': 0},
-            'sub': {'[x]': 0, '[-]': 0}
+            'sub': {'[x]': 0, '[-]': 0, '[>]': 0}
         }
         if not os.path.exists(FILENAME): return counts
 
@@ -1520,8 +1520,10 @@ class FocusCLI:
         print(f"    - Top-level: {summary['top']['[-]']}")
         print(f"    - Subtasks:  {summary['sub']['[-]']}")
 
-        # Deferred [>] - Top level only as per requirement
-        print(f"  Deferred  [>]: {summary['top']['[>]']}")
+        # Deferred [>]
+        print(f"  Deferred  [>]: {summary['top']['[>]'] + summary['sub']['[>]']}")
+        print(f"    - Top-level: {summary['top']['[>]']}")
+        print(f"    - Subtasks:  {summary['sub']['[>]']}")
 
         print("="*35)
         self.last_msg = "Enter 'q' to quit or 'f' to return to Free Write..."

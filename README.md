@@ -65,7 +65,7 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - **Automated Stack Rescue:** If the program is interrupted (e.g., via `Ctrl+C` or `SIGTERM`), it automatically "rescues" the current triage stack to the ledger to prevent data loss.
 - **Task Timer:** Tracks time spent on the current task.
 - **Focus Timer:** Countdown timer for the overall session.
-- **Mini Task Timer:** A repeating timer for rapid completion of small focus items. (Mini timers remain active during meeting subtasks).
+- **Mini Task Timer:** A repeating timer for rapid completion of small focus items. (Mini timers remain active during meetings).
 - **Auditory Feedback:** Chimes when timers expire.
 
 **Commands:**
@@ -94,7 +94,7 @@ This mode is designed for rapid-fire task completion (e.g., clearing an email in
 - **Auto-Reset:** The timer automatically resets to full duration whenever you complete (`x`), cancel (`-`), defer (`>`), or prioritize (`N`) a task.
 - **Persistence:** Once started with `m`, the mode stays active as you move through multiple tasks.
 - **Exceeding Time:** If you exceed the allotted time, the timer will count negative values and play a "tick" sound immediately, and every 30 seconds thereafter, until you reset it.
-- **Auto-Pause:** The mini timer is automatically paused and hidden during scheduled meetings or breaks. Resuming Focus session will automatically reset the mini timer to its full duration.
+- **Auto-Pause:** The mini timer is automatically paused and hidden during breaks. Resuming Focus session will automatically reset the mini timer to its full duration.
 
 ### 5. Break Mode
 Entered via `b` in Focus Mode. Displays inspirational quotes and a countdown.

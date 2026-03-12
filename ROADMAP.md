@@ -28,3 +28,5 @@
 - **Mini Task Session (m#):** Implement a manual-reset repeating timer for rapid completion of small focus items.
 - **Automatic Hierarchical Focus:** Automatically drill down into subtasks and sub-sub-tasks, focusing on the deepest pending items one at a time.
 - **Automated Stack Rescue (SIGINT/SIGTERM):** Implemented signal handlers to automatically rescue the current triage stack to the ledger when the process is interrupted or terminated.
+- **Smart Status Bar Consolidation:** Suppressed Task Timer when both Meeting and Mini timers are active to conserve space in the 65-character status bar.
+- **Improved Alert Headers:** Shortened alert headers (e.g., "!! BREAK TIME !!") and standardized on double exclamation marks for better visibility and space efficiency.

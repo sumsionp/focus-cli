@@ -1091,7 +1091,7 @@ class FocusCLI:
                     self.play_chime()
                     self.last_chime_timestamp = now
                     if remaining <= 0:
-                        self.last_msg = "!!! BREAK EXPIRED !!!"
+                        self.last_msg = "!! BREAK EXPIRED !!"
         elif self.mode in ["FOCUS", "TRIAGE"]:
             is_meeting = False
             if self.mode == "FOCUS" and self.triage_stack:
@@ -1164,7 +1164,7 @@ class FocusCLI:
         header = " BREAK SESSION "
         if remaining <= 0 or self.break_meeting_interrupted:
             color = "\033[1;31;7m"
-            header = " !!! BREAK EXPIRED !!! " if remaining <= 0 else " !!! MEETING STARTING !!! "
+            header = " !! BREAK EXPIRED !! " if remaining <= 0 else " !! MEETING STARTING !! "
 
         print(color + "="*65 + "\033[0m")
         print(f"{color}{header}\033[0m | Remaining: {time_str}")
@@ -1192,9 +1192,6 @@ class FocusCLI:
             if not self.triage_stack: return
             if self.task_start_time is None: self.task_start_time = now
             if self.focus_start_time is None: self.focus_start_time = now
-
-            task_elapsed = int(now - self.task_start_time)
-            tm, ts = divmod(task_elapsed, 60)
 
             focus_elapsed = int(now - self.focus_start_time)
             focus_remaining = self.focus_threshold - focus_elapsed
@@ -1224,14 +1221,20 @@ class FocusCLI:
                     mm, ms = divmod(abs(self.mini_timer_remaining), 60)
                     mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
 
+            task_timer_str = ""
+            if not (meeting_timer_str and mini_timer_str):
+                task_elapsed = int(now - self.task_start_time)
+                tm, ts = divmod(task_elapsed, 60)
+                task_timer_str = f" | Task: {tm:02d}:{ts:02d}"
+
             color = "\033[1;34m"
             header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
             if focus_elapsed > self.focus_threshold:
                 color = "\033[1;31;7m"
-                header = " !!! FOCUS LIMIT EXCEEDED !!! "
+                header = " !! BREAK TIME !! "
 
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
-            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
+            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m{task_timer_str} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
             sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
         elif self.mode == "BREAK":
             elapsed_break = time.time() - self.break_start_time
@@ -1242,7 +1245,7 @@ class FocusCLI:
             header = " BREAK SESSION "
             if remaining <= 0 or self.break_meeting_interrupted:
                 color = "\033[1;31;7m"
-                header = " !!! BREAK EXPIRED !!! " if remaining <= 0 else " !!! MEETING STARTING !!! "
+                header = " !! BREAK EXPIRED !! " if remaining <= 0 else " !! MEETING STARTING !! "
 
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
             sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Remaining: {sign}{m:02d}:{s:02d}")
@@ -1589,15 +1592,19 @@ class FocusCLI:
                 mm, ms = divmod(abs(self.mini_timer_remaining), 60)
                 mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
 
+        task_timer_str = ""
+        if not (meeting_timer_str and mini_timer_str):
+            task_timer_str = f" | Task: {tm:02d}:{ts:02d}"
+
         color = "\033[1;34m"
         header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
         if focus_elapsed > self.focus_threshold:
             color = "\033[1;31;7m"
-            header = " !!! FOCUS LIMIT EXCEEDED !!! "
+            header = " !! BREAK TIME !! "
 
         is_task = t['line'].startswith('[]')
         print(color + "="*65 + "\033[0m")
-        print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
+        print(f"{color}{header}\033[0m{task_timer_str} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
         print(color + "="*65 + "\033[0m")
         
         if parent_item:

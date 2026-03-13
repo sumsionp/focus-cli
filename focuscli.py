@@ -1237,10 +1237,30 @@ class FocusCLI:
         sys.stdout.flush()
 
     def _read_keypress(self, fd):
-        """Reads a single keypress or escape sequence burst."""
+        """Reads a single keypress, escape sequence burst, or multi-byte UTF-8 character."""
         try:
             b = os.read(fd, 1)
             if not b: return None
+
+            # UTF-8 multi-byte character handling
+            if (b[0] & 0x80) != 0 and b[0] != 0x1b:
+                # Count leading 1s to determine length
+                if (b[0] & 0xE0) == 0xC0: length = 2
+                elif (b[0] & 0xF0) == 0xE0: length = 3
+                elif (b[0] & 0xF8) == 0xF0: length = 4
+                else: return b.decode('utf-8', errors='ignore') # Invalid leading byte
+
+                seq = b
+                for _ in range(length - 1):
+                    r, _, _ = select.select([fd], [], [], 0.1)
+                    if r:
+                        next_b = os.read(fd, 1)
+                        if not next_b: break
+                        seq += next_b
+                    else:
+                        break
+                return seq.decode('utf-8', errors='ignore')
+
             if b == b'\x1b':
                 # burst read for escape sequences
                 seq = b
@@ -1285,6 +1305,7 @@ class FocusCLI:
         self.enter_free_write()
         self.focus_start_time = time.time()
         try:
+            # Set terminal to cbreak mode for the main input loop
             tty.setcbreak(fd)
             buffer = ""
             cursor_pos = 0
@@ -1298,9 +1319,6 @@ class FocusCLI:
             last_exceeded = False
 
             while True:
-                # Ensure cbreak is set for input loop
-                tty.setcbreak(fd)
-
                 now = time.time()
                 current_second = int(now)
                 current_task = self.triage_stack[0] if self.triage_stack else None
@@ -1395,6 +1413,7 @@ class FocusCLI:
                         termios.tcsetattr(fd, termios.TCSANOW, self.original_termios)
                         print()
                         result = self.handle_command(cmd)
+                        tty.setcbreak(fd)
                         cursor_pos = 0
 
                         if result == "QUIT":

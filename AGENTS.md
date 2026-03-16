@@ -14,6 +14,6 @@ This program is a "lens" for a chronological journal.
 ## Modal State Machine
 - **Free Write (via vi):** User enters data. 
 - **Triage:** Parsed from Free Write. Uses numbered commands: `p` (prioritize), `a` (assign), `i` (ignore).
-- **Focus (w):** Focused UI. Commands: `x` (complete), `n` (add task/note), `-` (cancel), `>` (defer), `b` (break), `f` (focus duration).
-- **Break (b):** Visual countdown. If a new meeting starts during a break, the UI turns red ("!!! MEETING STARTING !!!"), a chime sounds, and the meeting name is shown in the status bar. The user must manually resume Focus session with 'w'.
+- **Focus (f):** Focused UI. Commands: `x` (complete), `n` (add task/note), `-` (cancel), `>` (defer), `b` (break), `w` (free write).
+- **Break (b):** Visual countdown. If a new meeting starts during a break, the UI turns red ("!!! MEETING STARTING !!!"), a chime sounds, and the meeting name is shown in the status bar. The user must manually resume Focus session with 'f'.
 - **Exit Logic:** Exiting from Focus/Triage (via `q`) must trigger a "Rescue Append" of pending items under an `------- Interrupted -------` marker. (Note: `SIGINT/Ctrl+C` support is currently pending).

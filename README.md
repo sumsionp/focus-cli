@@ -46,18 +46,18 @@ Entered automatically after the initial Free Write session or by using the `t` c
 - `p <src> <dest>`: **Prioritize/Reorder.** Moves item at index `<src>` to `<dest>`.
 - `a <note_idx> <task_idx>`: **Assign.** Moves a note (or task) at `<note_idx>` to be a sub-item of task at `<task_idx>`.
 - `e <idx>`: **Edit.** Opens the item and its sub-items in `vi` for editing.
-- `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`.
+- `w`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`.
 - `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
 - `N`: **Prioritize.** Opens `vi` to add tasks/notes. Supports one-line addition: `N "[] Task"`. New top-level tasks are inserted at the top.
 - `N#`: **Prioritize at index.** Same as `N` but inserts new top-level tasks starting at index `#`. Leading sub-items target the task at index `#`.
 - `n`: **Add.** Opens `vi` to add tasks/notes. Supports one-line addition: `n "[] Task"`. New top-level tasks are appended to the end.
 - `n#`: **Add at index.** Identical to `N#`.
 - `b <mins>`: **Break.** Enters Break Mode.
-- `w`: **Focus.** Commits the triage session and enters Focus Mode.
+- `f`: **Focus.** Commits the triage session and enters Focus Mode.
 - `q`: **Quit.** Exits the CLI.
 
 ### 3. Focus Mode
-Entered by typing `w` from Triage Mode. It displays the top task along with its associated notes and subtasks.
+Entered by typing `f` from Triage Mode. It displays the top task along with its associated notes and subtasks.
 
 **Features:**
 - **Automatic Hierarchical Focus:** The system automatically drills down into the deepest pending subtask (`[]`). It presents the immediate parent as a header (`PARENT TASK >>`) and the sub-item as the active focus (`FOCUS >>`).
@@ -74,7 +74,7 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - `e`: **Edit.** Opens the current focused item and its nested sub-items in `vi` for editing.
 - `-`: **Cancel.** Marks the current focused item as cancelled `[-]`.
 - `>`: **Defer.** Marks the entire current top-level task tree as deferred `[>]` and appends it as a top-level task to the specified target file (defaulting to the end of today's stack). (Also resets the Mini Timer if active).
-- `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`. After editing, you return to Triage Mode.
+- `w`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`. After editing, you return to Triage Mode.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
 - `N`: **Prioritize.** Opens `vi` to add tasks/notes. Supports one-line addition: `N "[] Task"`. Indented items are added relative to current focus. New top-level tasks are inserted at index 0 (becoming the new focus).
@@ -102,7 +102,7 @@ Entered via `b` in Focus Mode. Displays inspirational quotes and a countdown.
 If a scheduled meeting starts while you are on a break, the UI will turn red, a chime will sound, and the meeting details will appear in the status bar. The session remains in Break Mode, allowing you to finish your break or manually resume Focus session with `w`.
 
 **Commands:**
-- `w`: **Focus.** Resumes the Focus session.
+- `f`: **Focus.** Resumes the Focus session.
 - `n` / `N`: **Add.** Add notes or tasks during your break.
 - `n#` / `N#`: **Add at index.** Add notes or tasks at a specific index.
 - `t`: **Triage.** Return to Triage mode.

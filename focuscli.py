@@ -1158,7 +1158,7 @@ class FocusCLI:
         print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
 
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [N#] prioritize, [n#] add, [t] triage, [w] focus, [q] quit")
+        print("Cmds: [N#] prioritize, [n#] add, [t] triage, [f] focus, [q] quit")
 
     def update_timer_ui(self):
         """Minimal redraw of just the header to preserve terminal selection."""
@@ -1508,7 +1508,7 @@ class FocusCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N#] prioritize, [n#] add, [>>] defer all, [b#] break, [w] focus, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [w] free write, [i#] ignore, [N#] prioritize, [n#] add, [>>] defer all, [b#] break, [f] focus, [q] quit")
 
     def render_exit(self):
         summary = self.get_daily_summary()
@@ -1530,7 +1530,7 @@ class FocusCLI:
         print(f"    - Subtasks:  {summary['sub']['[>]']}")
 
         print("="*35)
-        self.last_msg = "Enter 'q' to quit or 'f' to return to Free Write..."
+        self.last_msg = "Enter 'q' to quit or 'w' to return to Free Write..."
 
     def render_focus(self):
         if not self.triage_stack:
@@ -1630,7 +1630,7 @@ class FocusCLI:
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
         extra_cmds = ", [Space] reset" if is_mini_session else ""
-        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f] free write, [m#] mini{extra_cmds}, [N#] prioritize, [n#] add, [i] ignore, [t] triage, [q] quit")
+        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [w] free write, [m#] mini{extra_cmds}, [N#] prioritize, [n#] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         self.last_msg = "" # Reset status message
@@ -1653,7 +1653,7 @@ class FocusCLI:
             if self.mode == "EXIT":
                 if not parts or parts[0].lower() == 'q':
                     return "QUIT"
-                if parts[0].lower() == 'f':
+                if parts[0].lower() == 'w':
                     self.enter_free_write()
                     return "REDRAW"
                 return
@@ -1691,7 +1691,7 @@ class FocusCLI:
                 if self.focus_start_time is None: self.focus_start_time = time.time()
                 return
 
-            if base_cmd == 'f' and self.mode in ["FOCUS", "TRIAGE"]:
+            if base_cmd == 'w' and self.mode in ["FOCUS", "TRIAGE"]:
                 self.enter_free_write()
                 return "REDRAW"
 
@@ -1759,7 +1759,7 @@ class FocusCLI:
                 return
 
             if self.mode == "BREAK":
-                if base_cmd == 'w':
+                if base_cmd == 'f':
                     self._transition_from_break_to_focus()
                     return
                 elif base_cmd == 'b':
@@ -1775,7 +1775,7 @@ class FocusCLI:
                     return
 
             if self.mode == "TRIAGE":
-                if base_cmd == 'w':
+                if base_cmd == 'f':
                     now = datetime.now()
                     new_stack = []
                     for t in self.triage_stack:

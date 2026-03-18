@@ -1160,6 +1160,29 @@ class FocusCLI:
         print("\n" + color + "-"*65 + "\033[0m")
         print("Cmds: [N#] prioritize, [n#] add, [t] triage, [f] focus, [q] quit")
 
+    def enter_break_mode(self, parts):
+        duration = 5
+        if len(parts) > 1:
+            try:
+                duration = int(parts[1])
+            except ValueError:
+                self.last_msg = f"Invalid break duration: {parts[1]}"
+                return
+
+        if duration <= 0:
+            self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
+            return
+
+        self.mode = "BREAK"
+        self.break_meeting_interrupted = False
+        self.break_duration = duration
+        self.break_start_time = time.time()
+        self.break_quote = random.choice(BREAK_QUOTES)
+        self.last_chime_timestamp = 0
+        self.commit_to_ledger(f"Break for {duration} at", [])
+        return
+      
+
     def update_timer_ui(self):
         """Minimal redraw of just the header to preserve terminal selection."""
         sys.stdout.write("\033[s") # Save cursor
@@ -1827,25 +1850,7 @@ class FocusCLI:
                         self.initial_stack = copy.deepcopy(self.triage_stack)
 
                 elif base_cmd == 'b':
-                    duration = 5
-                    if len(parts) > 1:
-                        try:
-                            duration = int(parts[1])
-                        except ValueError:
-                            self.last_msg = f"Invalid break duration: {parts[1]}"
-                            return
-
-                    if duration <= 0:
-                        self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
-                        return
-
-                    self.mode = "BREAK"
-                    self.break_meeting_interrupted = False
-                    self.break_duration = duration
-                    self.break_start_time = time.time()
-                    self.break_quote = random.choice(BREAK_QUOTES)
-                    self.last_chime_timestamp = 0
-                    self.commit_to_ledger(f"Break for {duration} at", [])
+                    self.enter_break_mode(parts)
                     return
 
                 elif base_cmd in ['>', '>>']:
@@ -1864,25 +1869,7 @@ class FocusCLI:
                 is_note = not focus_item['line'].startswith('[]')
 
                 if base_cmd == 'b' and self.mode == "FOCUS":
-                    duration = 5
-                    if len(parts) > 1:
-                        try:
-                            duration = int(parts[1])
-                        except ValueError:
-                            self.last_msg = f"Invalid break duration: {parts[1]}"
-                            return
-
-                    if duration <= 0:
-                        self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
-                        return
-
-                    self.mode = "BREAK"
-                    self.break_meeting_interrupted = False
-                    self.break_duration = duration
-                    self.break_start_time = time.time()
-                    self.break_quote = random.choice(BREAK_QUOTES)
-                    self.last_chime_timestamp = 0
-                    self.commit_to_ledger(f"Break for {duration} at", [])
+                    self.enter_break_mode(parts)
                     return
 
 

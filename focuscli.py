@@ -1601,6 +1601,7 @@ class FocusCLI:
     def render_focus(self):
         if not self.triage_stack:
             return
+        top_task = self.triage_stack[0]
         
         now = time.time()
         if self.task_start_time is None: self.task_start_time = now
@@ -1614,9 +1615,6 @@ class FocusCLI:
         f_sign = "-" if focus_remaining < 0 else ""
         fm, fs = divmod(abs(focus_remaining), 60)
         
-        if not self.triage_stack:
-            return
-        top_task = self.triage_stack[0]
         focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
 
         # Handle "Task Started" ledger entry
@@ -1727,7 +1725,8 @@ class FocusCLI:
             if not parts: return
             base_cmd_orig = parts[0]
             base_cmd = base_cmd_orig.lower()
-            
+            top_task = self.triage_stack[0] if self.triage_stack else None
+
             if base_cmd == 'q':
                 if self.triage_stack:
                     # Restore terminal for input()
@@ -1781,11 +1780,10 @@ class FocusCLI:
                         items = [{'line': content, 'notes': [], 'indent': indent_len}]
                     else:
                         context = None
-                        if (self.mode in ["FOCUS", "BREAK"] or target_idx is not None) and self.triage_stack:
+                        if (self.mode in ["FOCUS", "BREAK"] or target_idx is not None) and self.triage_stack and top_task:
                             # Only show context if we are NOT targeting a specific index
                             # OR if the index is 0 (current focus)
                             if target_idx is None or target_idx == 0:
-                                top_task = self.triage_stack[0]
                                 focus_item, _, focus_path = self._get_recursive_focus(top_task)
 
                                 # Building hierarchical context string (just the focused item)
@@ -1826,7 +1824,7 @@ class FocusCLI:
 
             if self.mode == "BREAK":
                 # Check if this is an active break meeting
-                m_time = parse_meeting_time(top_task['line']) if self.triage_stack else None
+                m_time = parse_meeting_time(top_task['line']) if (self.triage_stack and top_task) else None
                 is_break_meeting = m_time and top_task['line'].strip().startswith('[B]') and m_time[0].timestamp() <= time.time() < m_time[1].timestamp()
                 match_x = re.match(r'^x(\d+)', cmd)
 
@@ -1926,13 +1924,12 @@ class FocusCLI:
                         return
 
             elif self.mode in ["FOCUS", "BREAK"]:
-                if not self.triage_stack:
+                if not self.triage_stack or not top_task:
                     if base_cmd == 'q':
                         return "QUIT"
                     if base_cmd != 'n':
                         return
 
-                top_task = self.triage_stack[0]
                 focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
                 is_note = not (focus_item['line'].startswith('[]') or focus_item['line'].startswith('[B]'))
 

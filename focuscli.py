@@ -901,6 +901,21 @@ class FocusCLI:
 
     def _transition_from_break_to_focus(self):
         now = time.time()
+        now_dt = datetime.now()
+
+        # Automatically mark ended meetings as complete
+        new_stack = []
+        for t in self.triage_stack:
+            m_time = parse_meeting_time(t['line'])
+            if m_time and m_time[1] < now_dt:
+                # Meeting already ended
+                task_content = re.sub(r'^\[[xeB\->\s]?\]\s*', '', t['line'])
+                t['line'] = f"[x] {task_content}"
+                t['notes'] = [f"[x] " + re.sub(r'^\[[xeB\->\s]?\]\s*', '', n) for n in t['notes']]
+                self.commit_to_ledger("Meeting Auto-Completed (on resume)", [t])
+                continue
+            new_stack.append(t)
+        self.triage_stack = new_stack
 
         break_total_time = now - self.break_start_time
         if self.task_start_time:
@@ -1810,6 +1825,11 @@ class FocusCLI:
                 return
 
             if self.mode == "BREAK":
+                # Check if this is an active break meeting
+                m_time = parse_meeting_time(top_task['line']) if self.triage_stack else None
+                is_break_meeting = m_time and top_task['line'].strip().startswith('[B]') and m_time[0].timestamp() <= time.time() < m_time[1].timestamp()
+                match_x = re.match(r'^x(\d+)', cmd)
+
                 if base_cmd == 'f':
                     self._transition_from_break_to_focus()
                     return
@@ -1821,6 +1841,8 @@ class FocusCLI:
                     pass # Handled by shared FOCUS/BREAK logic
                 elif base_cmd in ['t', 'q']:
                     pass # Handled by common logic
+                elif is_break_meeting and (base_cmd in ['x', '-', '>', '>>', 'i', 'e', 'w'] or match_x):
+                    pass # Allow resolution/edit for active break meetings
                 else:
                     self.last_msg = "Command disabled during break."
                     return
@@ -1912,7 +1934,7 @@ class FocusCLI:
 
                 top_task = self.triage_stack[0]
                 focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
-                is_note = not focus_item['line'].startswith('[]')
+                is_note = not (focus_item['line'].startswith('[]') or focus_item['line'].startswith('[B]'))
 
                 if base_cmd == 'b' and self.mode == "FOCUS":
                     duration = 5
@@ -2044,7 +2066,11 @@ class FocusCLI:
                     self.task_start_time = None
                     self.initial_stack = copy.deepcopy(self.triage_stack)
 
-                    if not self.triage_stack and self.mode == "FOCUS":
+                    if self.mode == "BREAK":
+                        # If resolving an active break meeting, return to FOCUS mode
+                        self._transition_from_break_to_focus()
+
+                    if not self.triage_stack and self.mode in ["FOCUS", "BREAK"]:
                         self.commit_to_ledger("Focus Session Complete", [])
                         self.mode = "EXIT"
                         return "REDRAW"

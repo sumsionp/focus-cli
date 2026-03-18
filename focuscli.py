@@ -214,10 +214,10 @@ class FocusCLI:
             while len(stack) < level:
                 stack.append("") # Fill gaps
 
-            marker_match = re.match(r'^\[([xe\->\s]?)\]', clean)
+            marker_match = re.match(r'^\[([xeB\->\s]?)\]', clean)
             if marker_match:
                 state = marker_match.group(1).strip()
-                if not state: state = 'pending'
+                if not state or state == 'B': state = 'pending'
                 content = clean[marker_match.end():].strip()
 
                 # Build a unique key based on parent path
@@ -379,15 +379,15 @@ class FocusCLI:
 
             if not line.startswith('  '):
                 clean = line.strip()
-                marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', clean)
+                marker_match = re.match(r'^\[([xeB\->\s]?)\]\s*', clean)
                 if marker_match:
                     state = marker_match.group(1).strip()
                     content = clean[marker_match.end():].strip()
 
-                    if not state:
+                    if not state or state == 'B':
                         # Pending task
                         notes = active_entries.pop(content, {}).get('notes', [])
-                        active_entries[content] = {'notes': notes, 'is_task': True}
+                        active_entries[content] = {'notes': notes, 'is_task': True, 'marker': state if state else ''}
                         if content in entry_order: entry_order.remove(content)
                         entry_order.append(content)
                     else:
@@ -411,13 +411,13 @@ class FocusCLI:
                     notes_list = active_entries[last_entry_content]['notes']
 
                     # Subtask/Note resolution logic
-                    sub_marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', note)
+                    sub_marker_match = re.match(r'^\[([xeB\->\s]?)\]\s*', note)
                     if sub_marker_match:
                         sub_content = note[sub_marker_match.end():].strip()
                         # Remove any existing instance of this subtask content
                         new_notes = []
                         for n in notes_list:
-                            m = re.match(r'^\[[xe\->\s]?\]\s*', n)
+                            m = re.match(r'^\[[xeB\->\s]?\]\s*', n)
                             if m and n[m.end():].strip() == sub_content:
                                 continue
                             new_notes.append(n)
@@ -432,8 +432,13 @@ class FocusCLI:
         for content in entry_order:
             if content in active_entries:
                 entry = active_entries[content]
+                if entry['is_task']:
+                    marker = entry.get('marker', '')
+                    line = f"[{marker}] {content}"
+                else:
+                    line = content
                 stack.append({
-                    'line': f"[] {content}" if entry['is_task'] else content,
+                    'line': line,
                     'notes': entry['notes']
                 })
         return stack
@@ -591,8 +596,8 @@ class FocusCLI:
                 # Handle ledger
                 edited_old = copy.deepcopy(original_item)
                 # If it was a task, mark as [e]
-                if edited_old['line'].startswith('[]'):
-                    edited_old['line'] = re.sub(r'^\[\s?\]', '[e]', edited_old['line'])
+                if edited_old['line'].startswith('[]') or edited_old['line'].startswith('[B]'):
+                    edited_old['line'] = re.sub(r'^\[[\sB]?\]', '[e]', edited_old['line'])
                 else:
                     # If it was a note, we just mark it as [e] anyway to satisfy auditability
                     edited_old['line'] = f"[e] {edited_old['line']}"
@@ -620,11 +625,11 @@ class FocusCLI:
 
         # Helper to process a single line
         def process_line(line, marker):
-            m = re.match(r'^(\s*)\[([xe\->\s]?)\]\s*', line)
+            m = re.match(r'^(\s*)\[([xeB\->\s]?)\]\s*', line)
             if m:
                 indent = m.group(1)
                 state = m.group(2).strip()
-                if not state: # only change if pending
+                if not state or state == 'B': # only change if pending
                     content = line[m.end():].strip()
                     return f"{indent}{marker} {content}"
             return line
@@ -896,9 +901,14 @@ class FocusCLI:
 
     def _transition_from_break_to_focus(self):
         now = time.time()
+
         break_total_time = now - self.break_start_time
         if self.task_start_time:
             self.task_start_time += break_total_time
+
+        # For scheduled break meetings, we reset the focus timer by setting focus_start_time to now.
+        # Actually, for ANY break, we set focus_start_time to now, which resets the ~25m session.
+        # This was already being done.
         self.focus_start_time = now
         self.mode = "FOCUS"
         self.break_meeting_interrupted = False
@@ -927,7 +937,8 @@ class FocusCLI:
             completed = sum(summary['top'].values())
             pending = 0
             for it in self.triage_stack:
-                if it['line'].strip().startswith('[]') or it['line'].strip().startswith('[ ]'):
+                line_strip = it['line'].strip()
+                if line_strip.startswith('[]') or line_strip.startswith('[ ]') or line_strip.startswith('[B]'):
                     pending += 1
             total = completed + pending
         else:
@@ -936,7 +947,7 @@ class FocusCLI:
                 if line.startswith('  '):
                     continue
 
-                marker_match = re.match(r'^\[([xe\->\s]?)\]', line.strip())
+                marker_match = re.match(r'^\[([xeB\->\s]?)\]', line.strip())
                 if marker_match:
                     total += 1
                     state = marker_match.group(1).strip()
@@ -990,7 +1001,7 @@ class FocusCLI:
                 current_idx = next_idx
             else:
                 line = item['notes'][current_idx]
-                if not re.match(r'^(\s*)\[([xe\->\s]?)\]\s*', line):
+                if not re.match(r'^(\s*)\[([xeB\->\s]?)\]\s*', line):
                     new_notes.append(line)
                 current_idx += 1
 
@@ -1071,7 +1082,12 @@ class FocusCLI:
             elapsed_break = now - self.break_start_time
             remaining = self.break_duration * 60 - elapsed_break
 
-            if remaining <= 0 or self.break_meeting_interrupted:
+            # Check for active break meeting
+            top_task = self.triage_stack[0] if self.triage_stack else None
+            m_time = parse_meeting_time(top_task['line']) if top_task else None
+            is_break_meeting = m_time and top_task['line'].strip().startswith('[B]') and m_time[0].timestamp() <= time.time() < m_time[1].timestamp()
+
+            if (remaining <= 0 and not is_break_meeting) or self.break_meeting_interrupted:
                 if now - self.last_chime_timestamp >= 60:
                     self.play_chime()
                     self.last_chime_timestamp = now
@@ -1080,7 +1096,9 @@ class FocusCLI:
         elif self.mode in ["FOCUS", "TRIAGE"]:
             is_meeting = False
             if self.mode == "FOCUS" and self.triage_stack:
-                is_meeting = parse_meeting_time(self.triage_stack[0]['line']) is not None
+                m_time = parse_meeting_time(self.triage_stack[0]['line'])
+                # Only suppress for regular meetings, NOT break meetings (since they shouldn't even be in FOCUS mode if active)
+                is_meeting = m_time is not None
 
             if self.focus_start_time:
                 focus_elapsed = now - self.focus_start_time
@@ -1110,12 +1128,22 @@ class FocusCLI:
                 if meeting_id not in self.chimed_meetings:
                     if self.mode == "BREAK":
                         self.break_meeting_interrupted = True
+
+                    if task['line'].strip().startswith('[B]'):
+                        self.mode = "BREAK"
+                        self.break_meeting_interrupted = False
+                        self.break_duration = (m_time[1] - m_time[0]).total_seconds() / 60.0
+                        self.break_start_time = time.mktime(m_time[0].timetuple())
+                        self.break_quote = random.choice(BREAK_QUOTES)
+                        self.focus_start_time = None
+                        self.commit_to_ledger(f"Break for {self.break_duration:.0f} (Scheduled) at", [])
+
                     self.play_chime()
                     self.chimed_meetings.add(meeting_id)
-                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
+                    task_content = re.sub(r'^\[[xeB\->\s]?\]\s*', '', task['line'])
                     self.last_msg = f"Meeting Starting: {task_content}"
 
-                if self.mode == "FOCUS":
+                if self.mode in ["FOCUS", "BREAK"]:
                     if i > 0 and not found_active_meeting:
                         current_task = self.triage_stack[0]
                         current_m_time = parse_meeting_time(current_task['line'])
@@ -1124,7 +1152,7 @@ class FocusCLI:
                         if not is_current_active_meeting:
                             self.triage_stack.insert(0, self.triage_stack.pop(i))
                             self.task_start_time = None
-                            task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', self.triage_stack[0]['line'])
+                            task_content = re.sub(r'^\[[xeB\->\s]?\]\s*', '', self.triage_stack[0]['line'])
                             self.last_msg = f"Meeting Started: {task_content}"
                             found_active_meeting = True
 
@@ -1134,6 +1162,11 @@ class FocusCLI:
     def render_break(self):
         elapsed_break = time.time() - self.break_start_time
         remaining = int(self.break_duration * 60 - elapsed_break)
+
+        # Check for active break meeting
+        top_task = self.triage_stack[0] if self.triage_stack else None
+        m_time = parse_meeting_time(top_task['line']) if top_task else None
+        is_break_meeting = m_time and top_task['line'].strip().startswith('[B]') and m_time[0].timestamp() <= time.time() < m_time[1].timestamp()
 
         sign = ""
         if remaining < 0:
@@ -1147,7 +1180,10 @@ class FocusCLI:
 
         color = "\033[1;34m"
         header = " BREAK SESSION "
-        if remaining <= 0 or self.break_meeting_interrupted:
+        if is_break_meeting:
+            color = "\033[1;32m"
+            header = " BREAK MEETING "
+        elif remaining <= 0 or self.break_meeting_interrupted:
             color = "\033[1;31;7m"
             header = " !! BREAK EXPIRED !! " if remaining <= 0 else " !! MEETING STARTING !! "
 
@@ -1155,7 +1191,14 @@ class FocusCLI:
         print(f"{color}{header}\033[0m | Remaining: {time_str}")
         print(color + "="*65 + "\033[0m")
 
-        print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
+        if is_break_meeting:
+            display_line = re.sub(r'^\[[\sB]?\]\s*', '', top_task['line'])
+            print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
+            for i, n in enumerate(top_task['notes']):
+                n_color = "\033[1;36m" if '[]' in n else ""
+                print(f"  {i}: {n_color}{n}\033[0m")
+        else:
+            print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
 
         print("\n" + color + "-"*65 + "\033[0m")
         print("Cmds: [N#] prioritize, [n#] add, [t] triage, [f] focus, [q] quit")
@@ -1221,11 +1264,19 @@ class FocusCLI:
         elif self.mode == "BREAK":
             elapsed_break = time.time() - self.break_start_time
             remaining = int(self.break_duration * 60 - elapsed_break)
+
+            top_task = self.triage_stack[0] if self.triage_stack else None
+            m_time = parse_meeting_time(top_task['line']) if top_task else None
+            is_break_meeting = m_time and top_task['line'].strip().startswith('[B]') and m_time[0].timestamp() <= time.time() < m_time[1].timestamp()
+
             sign = "-" if remaining < 0 else ""
             m, s = divmod(abs(remaining), 60)
             color = "\033[1;34m"
             header = " BREAK SESSION "
-            if remaining <= 0 or self.break_meeting_interrupted:
+            if is_break_meeting:
+                color = "\033[1;32m"
+                header = " BREAK MEETING "
+            elif remaining <= 0 or self.break_meeting_interrupted:
                 color = "\033[1;31;7m"
                 header = " !! BREAK EXPIRED !! " if remaining <= 0 else " !! MEETING STARTING !! "
 
@@ -1559,17 +1610,17 @@ class FocusCLI:
         if root_id != self.last_recorded_focus:
             if not focus_path:
                 item_to_record = copy.deepcopy(focus_item)
-                item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
+                item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xeB\->\s]?\]', n)]
                 self.commit_to_ledger("Task Started", [item_to_record])
             else:
                 # Build full path from top for ledger context
                 item_to_record = copy.deepcopy(focus_item)
-                item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
+                item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xeB\->\s]?\]', n)]
 
                 hierarchical_context = self._get_path_pruned_item(top_task, focus_path, item_to_record)
                 # Ensure root of this context is marked pending
                 if not hierarchical_context['line'].strip().startswith('[]'):
-                     hierarchical_context['line'] = re.sub(r'^(\s*)\[([xe\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
+                     hierarchical_context['line'] = re.sub(r'^(\s*)\[([xeB\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
                      if not hierarchical_context['line'].strip().startswith('[]'):
                          hierarchical_context['line'] = f"[] {hierarchical_context['line'].lstrip()}"
 
@@ -1610,7 +1661,7 @@ class FocusCLI:
         print(color + "="*65 + "\033[0m")
         
         if parent_item:
-            parent_display = re.sub(r'^\[\s?\]\s*', '', parent_item['line'])
+            parent_display = re.sub(r'^\[[\sB]?\]\s*', '', parent_item['line'])
             print(f"\n\033[1;34mPARENT TASK >>\n{parent_display}\033[0m")
 
         # Progress Bar
@@ -1620,7 +1671,7 @@ class FocusCLI:
             if p_bar:
                 print(f"\n\033[1;36m{p_bar}\033[0m")
 
-        display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
+        display_line = re.sub(r'^\[[\sB]?\]\s*', '', t['line'])
         if is_task:
             print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
         else:
@@ -1782,9 +1833,9 @@ class FocusCLI:
                         m_time = parse_meeting_time(t['line'])
                         if m_time and m_time[1] < now:
                             # Meeting already ended
-                            task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', t['line'])
+                            task_content = re.sub(r'^\[[xeB\->\s]?\]\s*', '', t['line'])
                             t['line'] = f"[x] {task_content}"
-                            t['notes'] = [f"[x] " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in t['notes']]
+                            t['notes'] = [f"[x] " + re.sub(r'^\[[xeB\->\s]?\]\s*', '', n) for n in t['notes']]
                             self.commit_to_ledger("Meeting Auto-Completed", [t])
                             continue
                         new_stack.append(t)
@@ -1929,7 +1980,7 @@ class FocusCLI:
                         return
                     idx = int(match_x.group(1))
                     if 0 <= idx < len(focus_item['notes']):
-                        focus_item['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', focus_item['notes'][idx])
+                        focus_item['notes'][idx] = re.sub(r'^\[[\sB]?\]', '[x]', focus_item['notes'][idx])
                         self._update_recursive_item(top_task, focus_path, focus_item)
                         if self.mini_timer_active:
                             self.mini_timer_remaining = self.mini_timer_duration * 60
@@ -1980,7 +2031,7 @@ class FocusCLI:
                         # Ensure root of this context is marked pending if it's not the focused item
                         if not hierarchical_context['line'].startswith('[]') and not focus_path == []:
                              # Use regex to replace/add marker
-                             hierarchical_context['line'] = re.sub(r'^(\s*)\[([xe\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
+                             hierarchical_context['line'] = re.sub(r'^(\s*)\[([xeB\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
                              if not hierarchical_context['line'].strip().startswith('[]'):
                                  hierarchical_context['line'] = f"[] {hierarchical_context['line'].lstrip()}"
 

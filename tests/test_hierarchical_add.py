@@ -17,7 +17,7 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_new_task_with_subtasks(self):
         """Scenario 1: Grouping subtasks with a new parent task."""
         self.cli.mode = "FOCUS"
-        self.cli.triage_stack = [{'line': '[] Active Task', 'notes': []}]
+        self.cli.triage_stack = [self.cli._parse_single_line('[] Active Task')]
 
         lines = [
             "[] New Parent",
@@ -34,8 +34,8 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_focus_preservation_with_N(self):
         """Scenario 5: Mixed batch with 'N' should preserve focus on current task."""
         initial_stack = [
-            {'line': '[] Task 1', 'notes': []},
-            {'line': '[] Task 2', 'notes': []}
+            self.cli._parse_single_line('[] Task 1'),
+            self.cli._parse_single_line('[] Task 2')
         ]
         self.cli.mode = "FOCUS"
         self.cli.triage_stack = copy.deepcopy(initial_stack)
@@ -56,8 +56,8 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_triage_leading_subtasks(self):
         """Scenario 8/9: Leading subtasks in Triage Mode target index 0."""
         initial_stack = [
-            {'line': '[] Task 1', 'notes': []},
-            {'line': '[] Task 2', 'notes': []}
+            self.cli._parse_single_line('[] Task 1'),
+            self.cli._parse_single_line('[] Task 2')
         ]
         self.cli.mode = "TRIAGE"
         self.cli.triage_stack = copy.deepcopy(initial_stack)
@@ -77,7 +77,12 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_prepend_notes_order_preservation(self):
         """Ensure prepended hierarchical items maintain original order."""
         self.cli.mode = "FOCUS"
-        self.cli.triage_stack = [{'line': '[] Active Task', 'notes': ['[] Existing Sub']}]
+        task = self.cli._parse_single_line('[] Active Task')
+        sub = self.cli._parse_single_line('[] Existing Sub')
+        sub.indent = 2
+        sub.parent = task
+        task.children.append(sub)
+        self.cli.triage_stack = [task]
 
         lines = [
             "  [] New Sub 1",

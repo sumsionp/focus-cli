@@ -91,7 +91,7 @@ def parse_meeting_time(text):
     text = text.upper()
 
     # 1. Check for 2 PM 2h 15m format
-    m1 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)\s*(?:(\d+)H)?\s*(?:(\d+)M)?', text)
+    m1 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)(?:\s*(\d+)H)?(?:\s*(\d+)M)?', text)
     if m1 and (m1.group(3) or m1.group(4)):
         start_time_str = m1.group(1)
         ampm = m1.group(2)
@@ -159,6 +159,156 @@ def strip_meeting_time(text):
     result = re.sub(r'\s+', ' ', result).strip()
     return result
 
+def parse_single_line(line):
+    indent_match = re.match(r'^(\s*)', line)
+    indent = len(indent_match.group(1)) if indent_match else 0
+    clean = line.strip()
+
+    # Header check
+    header_match = re.match(r'^------- (.*?) ([0-9/:\sAPM]+) -------$', clean)
+    if header_match:
+        return Header(header_match.group(1).strip(), header_match.group(2).strip(), indent)
+
+    if clean.startswith('-------') and clean.endswith('-------'):
+        label = clean.strip('-').strip()
+        return Header(label, "", indent)
+
+    # Task/Meeting check
+    task_match = re.match(r'^\[([xeB\->\s]?)\]\s*(.*)', clean)
+    if task_match:
+        state_char = task_match.group(1)
+        state = state_char if state_char and not state_char.isspace() else ' '
+        content = task_match.group(2)
+
+        m_time = parse_meeting_time(content)
+        if m_time or state == 'B':
+            start, end = m_time if m_time else (None, None)
+            return Meeting(content, indent, state, start, end)
+        return Task(content, indent, state)
+
+    return Note(clean, indent)
+
+class Item:
+    """Base class for anything in the ledger."""
+    def __init__(self, content, indent=0):
+        self.content = content
+        self.indent = indent
+        self.parent = None
+
+    def to_ledger(self):
+        """Returns the raw string for file writing."""
+        return f"{' ' * self.indent}{self.content}"
+
+    def __eq__(self, other):
+        if not isinstance(other, Item):
+            return False
+        return self.to_ledger() == other.to_ledger()
+
+    def __getitem__(self, key):
+        if key == 'line':
+            return self.to_ledger().strip()
+        elif key == 'notes':
+            return []
+        elif key == 'indent':
+            return self.indent
+        elif key == 'content':
+            return self.content
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+class Note(Item):
+    """A plain text entry with no state or children."""
+    pass
+
+class Task(Item):
+    """An entry with a [ ] marker and potential sub-items."""
+    def __init__(self, content, indent=0, state=' '):
+        super().__init__(content, indent)
+        self.state = state  # ' ', 'x', '-', '>', 'B', 'e'
+        self.children = []  # List of Item objects (Notes or Tasks)
+
+    @property
+    def is_complete(self):
+        return self.state == 'x'
+
+    def to_ledger(self):
+        state_str = self.state if self.state.strip() else ''
+        marker = f"[{state_str}]"
+        lines = [f"{' ' * self.indent}{marker} {self.content}"]
+        for child in self.children:
+            lines.append(child.to_ledger())
+        return "\n".join(lines)
+
+    def __getitem__(self, key):
+        if key == 'line':
+            # Tests expect '[]' if state is ' '
+            state_str = self.state if self.state.strip() else ''
+            marker = f"[{state_str}]"
+            return f"{marker} {self.content}"
+        elif key == 'notes':
+            def get_flat_notes(item, top_base_indent):
+                flat = []
+                for child in item.children:
+                    rel_indent = " " * max(0, child.indent - (top_base_indent + 2))
+                    state_str = child.state if isinstance(child, Task) and child.state.strip() else ''
+                    marker = f"[{state_str}] " if isinstance(child, Task) else ""
+                    content = child.content.strip()
+                    flat.append(f"{rel_indent}{marker}{content}")
+                    if isinstance(child, Task):
+                        flat.extend(get_flat_notes(child, top_base_indent))
+                return flat
+            return get_flat_notes(self, self.indent)
+        return super().__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if key == 'notes':
+            self.children = []
+            for line in value:
+                m = re.match(r'^(\s*)', line)
+                rel_indent_len = len(m.group(1))
+                abs_indent = rel_indent_len + self.indent + 2
+                child = parse_single_line(line)
+                child.indent = abs_indent
+                child.parent = self
+                self.children.append(child)
+        elif key == 'indent':
+            self.indent = value
+        else:
+            pass
+
+class Meeting(Task):
+    """A task that specifically maps to a time window."""
+    def __init__(self, content, indent=0, state=' ', start_time=None, end_time=None):
+        super().__init__(content, indent, state)
+        self.start_time = start_time
+        self.end_time = end_time
+
+    def is_active(self, now=None):
+        if now is None:
+            now = datetime.now()
+        if not self.start_time or not self.end_time:
+            m_time = parse_meeting_time(self.content)
+            if m_time:
+                self.start_time, self.end_time = m_time
+        if not self.start_time or not self.end_time:
+            return False
+        return self.start_time <= now < self.end_time
+
+class Header(Item):
+    """A ledger marker line like ------- LABEL TIMESTAMP -------"""
+    def __init__(self, label, timestamp, indent=0):
+        super().__init__(label, indent)
+        self.label = label
+        self.timestamp = timestamp
+
+    def to_ledger(self):
+        return f"{' ' * self.indent}------- {self.label} {self.timestamp} -------"
+
 class FocusCLI:
     def __init__(self):
         self.mode = "TRIAGE"
@@ -183,6 +333,9 @@ class FocusCLI:
         self.last_recorded_focus = None
         self.break_meeting_interrupted = False
 
+    def _parse_single_line(self, line):
+        return parse_single_line(line)
+
     def get_daily_summary(self):
         """Returns a dictionary of counts for top-level tasks and subtasks."""
         counts = {
@@ -191,45 +344,30 @@ class FocusCLI:
         }
         if not os.path.exists(FILENAME): return counts
 
-        latest_states = {} # full_path_key -> (state, level)
-
         with open(FILENAME, 'r') as f:
             lines = f.readlines()
 
-        stack = [] # current hierarchy of content strings
+        latest_states = {} # full_path_key -> (state, level)
+        stack = [] # current hierarchy of (content, indent)
 
         for line in lines:
             line_raw = line.rstrip('\n\r')
             if not line_raw.strip() or "-------" in line_raw:
                 continue
 
-            m = re.match(r'^(\s*)', line_raw)
-            indent = len(m.group(1)) if m else 0
-            clean = line_raw.strip()
-            level = indent // 2
+            item = self._parse_single_line(line_raw)
+            level = item.indent // 2
 
-            # Adjust stack to current level
-            if level < len(stack):
-                stack = stack[:level]
-            while len(stack) < level:
-                stack.append("") # Fill gaps
+            while stack and stack[-1][1] >= item.indent:
+                stack.pop()
 
-            marker_match = re.match(r'^\[([xe\->\s]?)\]', clean)
-            if marker_match:
-                state = marker_match.group(1).strip()
-                if not state: state = 'pending'
-                content = clean[marker_match.end():].strip()
+            parent_path = " > ".join(c for c, i in stack)
+            full_key = f"{parent_path} > {item.content}" if parent_path else item.content
 
-                # Build a unique key based on parent path
-                parent_path = " > ".join(stack)
-                full_key = f"{parent_path} > {content}" if parent_path else content
+            if isinstance(item, Task):
+                latest_states[full_key] = (item.state, level)
 
-                latest_states[full_key] = (state, level)
-                stack.append(content)
-            else:
-                # It's a note; still update stack as it can be a parent
-                content = clean
-                stack.append(content)
+            stack.append((item.content, item.indent))
 
         for key, (state, level) in latest_states.items():
             if state in ['x', '-', '>']:
@@ -274,12 +412,13 @@ class FocusCLI:
         inactive_meetings = []
 
         for item in self.triage_stack:
-            m_time = parse_meeting_time(item['line'])
-            if m_time:
-                if m_time[0] <= now < m_time[1]:
+            if isinstance(item, Meeting):
+                if item.start_time and item.end_time and item.start_time <= now < item.end_time:
                     active_meetings.append(item)
+                elif item.start_time:
+                    inactive_meetings.append((item.start_time, item))
                 else:
-                    inactive_meetings.append((m_time[0], item))
+                    other_tasks.append(item)
             else:
                 other_tasks.append(item)
 
@@ -318,7 +457,7 @@ class FocusCLI:
                 tasks_and_notes = self._parse_file(prev_file)
 
                 # We only want tasks (starting with [])
-                pending_tasks = [t for t in tasks_and_notes if t['line'].strip().startswith('[]')]
+                pending_tasks = [t for t in tasks_and_notes if isinstance(t, Task) and t.state == ' ']
 
                 if pending_tasks:
                     # Mark as deferred in the old file
@@ -329,7 +468,7 @@ class FocusCLI:
                     ledger_items = []
                     for task in pending_tasks:
                         # Current ledger version: main task [>], pending subtasks [>], others preserve
-                        l_task = self._prepare_task_with_markers(task, '[>]', '[>]')
+                        l_task = self._prepare_task_with_markers(task, '>', '>')
                         ledger_items.append(l_task)
 
                     self.commit_to_ledger(label, ledger_items, target_file=prev_file)
@@ -339,9 +478,9 @@ class FocusCLI:
                     for task in pending_tasks:
                         # Deep copy and strip meeting times
                         rescued_task = copy.deepcopy(task)
-                        rescued_task['line'] = strip_meeting_time(rescued_task['line'])
+                        rescued_task.content = strip_meeting_time(rescued_task.content)
                         # Target version: main task [], subtasks preserve status
-                        t_task = self._prepare_task_with_markers(rescued_task, '[]', '[]')
+                        t_task = self._prepare_task_with_markers(rescued_task, ' ', ' ')
                         all_rescued_tasks.append(t_task)
 
         if all_rescued_tasks:
@@ -350,173 +489,92 @@ class FocusCLI:
             self.triage_stack.extend(all_rescued_tasks)
 
     def _parse_file(self, filepath):
-        """Parses a ledger file and returns a list of active tasks and notes."""
+        """Parses a ledger file and returns a list of active Task and Note objects."""
         if not os.path.exists(filepath):
             return []
 
         with open(filepath, 'r') as f:
             lines = [l.rstrip() for l in f.readlines()]
 
-        active_entries = {} # content -> {notes, is_task}
-        entry_order = [] # list of contents
-        last_entry_content = None
+        active_items = {} # (path_tuple) -> Item
+        top_level_contents = [] # To preserve order
+        current_path = [] # list of Item objects
 
         for line in lines:
-            if "------- Triage" in line:
-                new_entry_order = []
-                for content in entry_order:
-                    if content in active_entries:
-                        if active_entries[content]['is_task']:
-                            new_entry_order.append(content)
-                        else:
-                            del active_entries[content]
-                entry_order = new_entry_order
-                last_entry_content = None
-                continue
+            line_raw = line.rstrip()
+            if not line_raw.strip(): continue
 
-            if not line.strip() or "-------" in line:
-                continue
-
-            if not line.startswith('  '):
-                clean = line.strip()
-                marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', clean)
-                if marker_match:
-                    state = marker_match.group(1).strip()
-                    content = clean[marker_match.end():].strip()
-
-                    if not state:
-                        # Pending task
-                        notes = active_entries.pop(content, {}).get('notes', [])
-                        active_entries[content] = {'notes': notes, 'is_task': True}
-                        if content in entry_order: entry_order.remove(content)
-                        entry_order.append(content)
+            if "------- Triage" in line_raw:
+                new_top_level = []
+                for content in top_level_contents:
+                    key = (content,)
+                    if key in active_items and isinstance(active_items[key], Task):
+                        new_top_level.append(content)
                     else:
-                        # Resolution
-                        active_entries.pop(content, None)
-                        if content in entry_order: entry_order.remove(content)
-                    last_entry_content = content
+                        active_items.pop(key, None)
+                top_level_contents = new_top_level
+                continue
+
+            if "-------" in line_raw: continue
+
+            item = self._parse_single_line(line_raw)
+
+            # Adjust current_path
+            while current_path and current_path[-1].indent >= item.indent:
+                current_path.pop()
+
+            parent_path = tuple(i.content for i in current_path)
+            full_path = parent_path + (item.content,)
+
+            if isinstance(item, Task):
+                if item.state == ' ':
+                    # Pending task. Preserve children if already known.
+                    if full_path in active_items:
+                        existing = active_items[full_path]
+                        if isinstance(existing, Task):
+                            item.children = existing.children
+                            for c in item.children: c.parent = item
+
+                    active_items[full_path] = item
+                    if not current_path:
+                        if item.content not in top_level_contents:
+                            top_level_contents.append(item.content)
+                    else:
+                        parent = current_path[-1]
+                        if isinstance(parent, Task):
+                            parent.children = [c for c in parent.children if c.content != item.content]
+                            parent.children.append(item)
+                            item.parent = parent
+                    current_path.append(item)
                 else:
-                    # Non-task entry
-                    content = clean
-                    notes = active_entries.pop(content, {}).get('notes', [])
-                    active_entries[content] = {'notes': notes, 'is_task': False}
-                    if content in entry_order: entry_order.remove(content)
-                    entry_order.append(content)
-                    last_entry_content = content
-            else:
-                # Indented line
-                if last_entry_content and last_entry_content in active_entries:
-                    # Remove only the first 2 spaces to preserve deeper nesting
-                    note = line[2:] if line.startswith('  ') else line.lstrip()
-                    notes_list = active_entries[last_entry_content]['notes']
-
-                    # Subtask/Note resolution logic
-                    sub_marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', note)
-                    if sub_marker_match:
-                        sub_content = note[sub_marker_match.end():].strip()
-                        # Remove any existing instance of this subtask content
-                        new_notes = []
-                        for n in notes_list:
-                            m = re.match(r'^\[[xe\->\s]?\]\s*', n)
-                            if m and n[m.end():].strip() == sub_content:
-                                continue
-                            new_notes.append(n)
-                        notes_list = new_notes
-                        notes_list.append(note)
+                    # Resolution
+                    active_items.pop(full_path, None)
+                    if not current_path:
+                        if item.content in top_level_contents:
+                            top_level_contents.remove(item.content)
                     else:
-                        if note in notes_list: notes_list.remove(note)
-                        notes_list.append(note)
-                    active_entries[last_entry_content]['notes'] = notes_list
-
-        stack = []
-        for content in entry_order:
-            if content in active_entries:
-                entry = active_entries[content]
-                stack.append({
-                    'line': f"[] {content}" if entry['is_task'] else content,
-                    'notes': entry['notes']
-                })
-        return stack
-
-    def _prepare_defer_tasks(self, task, target_date):
-        """Prepare tasks for ledger and target file without committing them."""
-        is_target_today = target_date.date() == datetime.now().date()
-        today_str = datetime.now().strftime(DATE_FORMAT)
-        is_current_file_today = today_str in FILENAME
-
-        # Deep copy to avoid mutating original
-        deferred_task = copy.deepcopy(task)
-        deferred_task['line'] = strip_meeting_time(deferred_task['line'])
-
-        # Target version: main task [], subtasks preserve status
-        target_task = self._prepare_task_with_markers(deferred_task, '[]', '[]')
-        # Current ledger version: main task [>], pending subtasks [>], others preserve
-        ledger_task = self._prepare_task_with_markers(deferred_task, '[>]', '[>]')
-
-        if is_target_today and is_current_file_today:
-            return ledger_task, target_task, "today"
-        else:
-            target_file = get_target_file(target_date)
-            return ledger_task, target_task, target_file
-
-    def _handle_defer_command(self, base_cmd, parts):
-        """Common logic for > and >> deferral commands."""
-        defer_date_str = " ".join(parts[1:])
-        target_date = parse_defer_date(defer_date_str)
-        if not target_date:
-            self.last_msg = f"Invalid date: {defer_date_str}"
-            return True
-
-        if not self.triage_stack:
-            return True
-
-        ledger_items = []
-        target_items = []
-        target_res = None
-
-        if base_cmd == '>>':
-            count = len(self.triage_stack)
-            while self.triage_stack:
-                task = self.triage_stack.pop(0)
-                l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
-                ledger_items.append(l_task)
-                if t_task: target_items.append(t_task)
-                target_res = res
-
-            if target_res == "today":
-                self.commit_to_ledger("Deferred", ledger_items)
-                self.triage_stack.extend(target_items)
-                self.last_msg = f"Deferred {count} items to end of today's stack"
+                        parent = current_path[-1]
+                        if isinstance(parent, Task):
+                            parent.children = [c for c in parent.children if c.content != item.content]
             else:
-                label = f"Deferred to {target_res}"
-                self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
-                self.commit_to_ledger(label, ledger_items)
-                self.last_msg = f"Deferred {count} items to {target_res}"
-        else: # base_cmd == '>'
-            task = self.triage_stack.pop(0)
-            l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
-            if res == "today":
-                self.commit_to_ledger("Deferred", [l_task])
-                self.triage_stack.append(t_task)
-                self.last_msg = "Deferred to end of today's stack"
-            else:
-                label = f"Deferred to {res}"
-                self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
-                self.commit_to_ledger(label, [l_task])
-                self.last_msg = f"Deferred to {res}"
+                # Note
+                if not current_path:
+                    if item.content not in top_level_contents:
+                        top_level_contents.append(item.content)
+                else:
+                    parent = current_path[-1]
+                    if isinstance(parent, Task):
+                         parent.children = [c for c in parent.children if not (isinstance(c, Note) and c.content == item.content)]
+                         parent.children.append(item)
+                         item.parent = parent
+                active_items[full_path] = item
 
-        self.commit_to_ledger("Triage", self.triage_stack)
-        self.task_start_time = None
-        self.initial_stack = copy.deepcopy(self.triage_stack)
-        return True
+        return [active_items[(c,)] for c in top_level_contents if (c,) in active_items]
 
     def _get_multi_line_input(self, context_lines=None):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
-            # Start with a blank line for typing
             tf.write("\n")
-            # Pad with some space so comments are clearly at the bottom
             tf.write("\n\n")
-            # Comments at the bottom for visual alignment
             tf.write("# Enter one task or note per line\n")
             if context_lines:
                 for cl in context_lines:
@@ -525,10 +583,8 @@ class FocusCLI:
 
         try:
             self._run_with_vi(["+startinsert", temp_path])
-
             with open(temp_path, 'r') as f:
                 lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
-
             return lines
         finally:
             if os.path.exists(temp_path):
@@ -549,61 +605,47 @@ class FocusCLI:
             indent_len = len(m.group(1))
             content = line[indent_len:]
 
-            # A line starts a new item if:
-            # 1. There is no current item
-            # 2. OR its indentation is less than or equal to the current item's base indentation
             if not current_item or indent_len <= current_item['indent']:
                 current_item = {'line': content, 'notes': [], 'indent': indent_len}
                 items.append(current_item)
             else:
-                # It's a note for the current item
-                # Preserve relative indentation for notes by stripping only the task's base indent + 2
                 note_rel = line[current_item['indent'] + 2:] if len(line) >= current_item['indent'] + 2 else line.lstrip()
                 current_item['notes'].append(note_rel)
 
         return items
 
-    def _edit_item(self, item):
+    def _edit_item_obj(self, item):
         original_item = copy.deepcopy(item)
-
-        content = [item['line']]
-        for note in item['notes']:
-            content.append(f"  {note}")
+        content_lines = item.to_ledger().split('\n')
 
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
-            tf.write("\n".join(content))
+            tf.write("\n".join(content_lines))
             temp_path = tf.name
 
         try:
             self._run_with_vi([temp_path])
-
             with open(temp_path, 'r') as f:
                 new_lines = [l.rstrip() for l in f.readlines() if l.strip()]
 
             if not new_lines: return item
 
-            new_line = new_lines[0]
-            new_notes = [l[2:] if l.startswith('  ') else l.strip() for l in new_lines[1:]]
+            first_line = new_lines[0]
+            new_item = self._parse_single_line(first_line)
+            new_item.indent = original_item.indent
 
-            new_item = {'line': new_line, 'notes': new_notes}
+            if isinstance(new_item, Task):
+                for line in new_lines[1:]:
+                    child = self._parse_single_line(line)
+                    child.parent = new_item
+                    new_item.children.append(child)
 
-            if new_item != original_item:
-                # Handle ledger
+            if new_item.to_ledger() != original_item.to_ledger():
                 edited_old = copy.deepcopy(original_item)
-                # If it was a task, mark as [e]
-                if edited_old['line'].startswith('[]'):
-                    edited_old['line'] = re.sub(r'^\[\s?\]', '[e]', edited_old['line'])
-                else:
-                    # If it was a note, we just mark it as [e] anyway to satisfy auditability
-                    edited_old['line'] = f"[e] {edited_old['line']}"
+                if isinstance(edited_old, Task):
+                    edited_old.state = 'e'
 
-                # New item should be [] if it wasn't already or if it's a note that we want to become a task?
-                # Actually, the user can decide in vi.
-                # But if it doesn't have a marker, and they wanted it to be a task, they should add [].
-                # However, the user said "The new task should be written as pending '[]'".
-                # Let's ensure if it was a task, it stays a task.
-                if original_item['line'].startswith('[]') and not new_item['line'].startswith('[]'):
-                    new_item['line'] = f"[] {new_item['line']}"
+                if isinstance(original_item, Task) and isinstance(new_item, Task):
+                    new_item.state = ' '
 
                 self.commit_to_ledger("Edited", [edited_old, new_item])
                 self.last_msg = "Item Edited"
@@ -614,55 +656,96 @@ class FocusCLI:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
-    def _prepare_task_with_markers(self, task, main_marker, pending_sub_marker):
+    def _handle_defer_command_obj(self, base_cmd, parts):
+        defer_date_str = " ".join(parts[1:])
+        target_date = parse_defer_date(defer_date_str)
+        if not target_date:
+            self.last_msg = f"Invalid date: {defer_date_str}"
+            return True
+
+        if not self.triage_stack:
+            return True
+
+        ledger_items = []
+        target_items = []
+        target_res = None
+
+        def prepare_defer(item):
+            is_target_today = target_date.date() == datetime.now().date()
+            today_str = datetime.now().strftime(DATE_FORMAT)
+            is_current_file_today = today_str in FILENAME
+
+            target = self._prepare_task_with_markers(item, ' ', ' ')
+            ledger = self._prepare_task_with_markers(item, '>', '>')
+
+            res = "today" if (is_target_today and is_current_file_today) else get_target_file(target_date)
+            return ledger, target, res
+
+        if base_cmd == '>>':
+            count = len(self.triage_stack)
+            while self.triage_stack:
+                item = self.triage_stack.pop(0)
+                l_item, t_item, res = prepare_defer(item)
+                ledger_items.append(l_item)
+                target_items.append(t_item)
+                target_res = res
+
+            if target_res == "today":
+                self.commit_to_ledger("Deferred", ledger_items)
+                self.triage_stack.extend(target_items)
+            else:
+                self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
+                self.commit_to_ledger(f"Deferred to {target_res}", ledger_items)
+        else: # '>'
+            item = self.triage_stack.pop(0)
+            l_item, t_item, res = prepare_defer(item)
+            if res == "today":
+                self.commit_to_ledger("Deferred", [l_item])
+                self.triage_stack.append(t_item)
+            else:
+                self.commit_to_ledger("Deferred from last session", [t_item], target_file=res)
+                self.commit_to_ledger(f"Deferred to {res}", [l_item])
+
+        self.commit_to_ledger("Triage", self.triage_stack)
+        self.task_start_time = None
+        self.initial_stack = copy.deepcopy(self.triage_stack)
+        return True
+
+    def _prepare_task_with_markers(self, item, main_state, pending_sub_state):
         """Helper to create a copy of a task with updated markers for pending items."""
-        new_task = copy.deepcopy(task)
+        new_item = copy.deepcopy(item)
 
-        # Helper to process a single line
-        def process_line(line, marker):
-            m = re.match(r'^(\s*)\[([xe\->\s]?)\]\s*', line)
-            if m:
-                indent = m.group(1)
-                state = m.group(2).strip()
-                if not state: # only change if pending
-                    content = line[m.end():].strip()
-                    return f"{indent}{marker} {content}"
-            return line
+        def process_item(it, state):
+            if isinstance(it, Task):
+                if it.state == ' ':
+                    it.state = state
+                for child in it.children:
+                    process_item(child, pending_sub_state)
 
-        new_task['line'] = process_line(task['line'], main_marker)
-        new_task['notes'] = [process_line(n, pending_sub_marker) for n in task['notes']]
-        return new_task
+        if isinstance(new_item, Task):
+            if new_item.state == ' ':
+                new_item.state = main_state
+            for child in new_item.children:
+                process_item(child, pending_sub_state)
 
-    def _get_subtask_as_item(self, parent_task, idx):
-        subtask_line = parent_task['notes'][idx]
-        notes = []
-        i = idx + 1
-        while i < len(parent_task['notes']) and parent_task['notes'][i].startswith('  '):
-            # Remove the extra 2 spaces of indentation
-            notes.append(parent_task['notes'][i][2:])
-            i += 1
-        return {'line': subtask_line, 'notes': notes}, i
+        if main_state == '>' and isinstance(new_item, Task):
+             new_item.content = strip_meeting_time(new_item.content)
 
-    def _update_subtask_from_item(self, parent_task, idx, end_idx, item):
-        new_lines = [item['line']] + [f"  {n}" for n in item['notes']]
-        parent_task['notes'][idx:end_idx] = new_lines
-        return idx + len(new_lines)
+        return new_item
 
     def _get_recursive_focus(self, item):
         """Recursively find the deepest pending task."""
-        for i, note in enumerate(item['notes']):
-            if note.strip().startswith('[]'):
-                sub_item, sub_end_idx = self._get_subtask_as_item(item, i)
-                deep_item, deep_parent, deep_path = self._get_recursive_focus(sub_item)
+        if not isinstance(item, Task):
+            return item, None, []
 
+        for i, child in enumerate(item.children):
+            if isinstance(child, Task) and child.state == ' ':
+                deep_item, deep_parent, deep_path = self._get_recursive_focus(child)
                 if deep_parent is None:
-                    # sub_item is the focus, item is its parent
                     return deep_item, item, [i]
                 else:
-                    # Focus is even deeper
                     return deep_item, deep_parent, [i] + deep_path
 
-        # No pending subtasks found
         return item, None, []
 
     def _update_recursive_item(self, top_item, path, new_sub_item):
@@ -671,66 +754,57 @@ class FocusCLI:
 
     def _recursive_set(self, item, path, new_sub_item):
         if not path:
-            item['line'] = new_sub_item['line']
-            item['notes'] = new_sub_item['notes']
+            item.content = new_sub_item.content
+            if isinstance(item, Task) and isinstance(new_sub_item, Task):
+                item.state = new_sub_item.state
+                item.children = new_sub_item.children
+                for c in item.children: c.parent = item
             return
 
         idx = path[0]
-        sub_item, end_idx = self._get_subtask_as_item(item, idx)
-        self._recursive_set(sub_item, path[1:], new_sub_item)
-        self._update_subtask_from_item(item, idx, end_idx, sub_item)
+        if isinstance(item, Task) and idx < len(item.children):
+            self._recursive_set(item.children[idx], path[1:], new_sub_item)
 
     def _recursive_insert(self, item, path, new_items, position='before'):
         """Recursively insert items into the hierarchy relative to the focus path."""
         if not path:
+            if not isinstance(item, Task): return True
             if position == 'append':
-                # Appending to the end of this item's notes
                 for it in new_items:
-                    prefix = " " * it.get('indent', 0)
-                    item['notes'].append(f"{prefix}{it['line']}")
-                    for n in it['notes']:
-                        item['notes'].append(f"{prefix}  {n}")
+                    it.parent = item
+                    item.children.append(it)
                 return False
             elif position == 'prepend_notes':
-                # Prepend to the beginning of this item's notes
-                new_lines = []
-                for it in new_items:
-                    prefix = " " * it.get('indent', 0)
-                    new_lines.append(f"{prefix}{it['line']}")
-                    for n in it['notes']:
-                        new_lines.append(f"{prefix}  {n}")
-                item['notes'][0:0] = new_lines
+                # To maintain order [A, B] -> insert B at 0, then A at 0 -> [A, B, ...]
+                for it in reversed(new_items):
+                    it.parent = item
+                    item.children.insert(0, it)
                 return False
             else:
-                return True # Signal to parent to insert relative to this item
+                return True # Signal to parent
 
         idx = path[0]
-        sub_item, end_idx = self._get_subtask_as_item(item, idx)
+        if not isinstance(item, Task) or idx >= len(item.children):
+            return False
+
+        child = item.children[idx]
 
         if len(path) == 1 and position not in ['append', 'prepend_notes']:
-            # We are in the parent of the focus item
-            new_lines = []
-            for it in new_items:
-                prefix = " " * it.get('indent', 0)
-                new_lines.append(f"{prefix}{it['line']}")
-                for n in it['notes']:
-                    new_lines.append(f"{prefix}  {n}")
-
             if position == 'before':
-                item['notes'][idx:idx] = new_lines
-            else:
-                # 'after' - insert after the sub-item AND its notes
-                item['notes'][end_idx:end_idx] = new_lines
+                for it in reversed(new_items):
+                    it.parent = item
+                    item.children.insert(idx, it)
+            else: # 'after'
+                for it in reversed(new_items):
+                    it.parent = item
+                    item.children.insert(idx + 1, it)
         else:
-            # Recurse deeper
-            self._recursive_insert(sub_item, path[1:], new_items, position)
-            # Update our record of the sub_item which might have changed
-            self._update_subtask_from_item(item, idx, end_idx, sub_item)
+            self._recursive_insert(child, path[1:], new_items, position)
 
         return False
 
-    def _handle_hierarchical_new_items(self, base_cmd_orig, items, target_index=None):
-        """Processes a batch of items and inserts them into the task tree based on absolute indentation."""
+    def _handle_hierarchical_new_items(self, base_cmd_orig, raw_items, target_index=None):
+        """Processes a batch of items and inserts them into the task tree."""
         if target_index is not None:
             mode_label = f"New Entry(s) at index {target_index}"
         else:
@@ -738,14 +812,22 @@ class FocusCLI:
 
         any_changed = False
 
-        # Separate items into top-level (indent 0) and hierarchical (indent > 0)
-        top_level_items = [it for it in items if it['indent'] == 0]
-        hier_items = [it for it in items if it['indent'] > 0]
+        def to_obj(raw, base_indent=0):
+            obj = self._parse_single_line(raw['line'])
+            obj.indent = raw['indent'] + base_indent
+            if isinstance(obj, Task):
+                for n in raw['notes']:
+                    child = to_obj({'line': n, 'indent': 2, 'notes': []}, obj.indent)
+                    child.parent = obj
+                    obj.children.append(child)
+            return obj
+
+        items = [to_obj(it) for it in raw_items]
+        top_level_items = [it for it in items if it.indent == 0]
+        hier_items = [it for it in items if it.indent > 0]
 
         if hier_items and self.triage_stack:
             any_changed = True
-
-            # Use target_index if provided, otherwise default to 0
             idx = target_index if target_index is not None else 0
 
             if idx < len(self.triage_stack):
@@ -756,50 +838,51 @@ class FocusCLI:
                     focus_indents = [0]
                 else:
                     _, _, focus_path = self._get_recursive_focus(target_task)
-                    # Calculate absolute indentation of focus path elements
-                    focus_indents = [0] # Top-level task is 0
+                    focus_indents = [0]
                     curr = target_task
                     for p_idx in focus_path:
-                        sub, _ = self._get_subtask_as_item(curr, p_idx)
                         focus_indents.append(focus_indents[-1] + 2)
-                        curr = sub
+                        curr = curr.children[p_idx]
 
                 msg = "Sub-item(s) Added"
                 if self.mode == "TRIAGE" or target_index is not None:
-                    # Target specific task in stack
-                    self._insert_hierarchical_batch(target_task, focus_path, hier_items, base_cmd_orig)
-                    self.commit_to_ledger(mode_label, [target_task])
+                    pos = 'prepend_notes' if base_cmd_orig == 'N' else 'append'
+                    self._recursive_insert(target_task, focus_path, hier_items, position=pos)
                 else:
-                    # Focus mode recursive insertion
-                    # Reverse items for 'N' to maintain original order when prepending/inserting before
-                    items_to_process = reversed(hier_items) if base_cmd_orig == 'N' else hier_items
-                    for it in items_to_process:
-                        it_copy = copy.deepcopy(it)
+                    items_by_depth = {}
+                    for it in hier_items:
                         focus_indent = focus_indents[len(focus_path)]
-
-                        depth_offset = (it['indent'] - focus_indent) // 2
+                        depth_offset = (it.indent - focus_indent) // 2
                         target_depth = len(focus_path) + depth_offset
                         target_depth = max(0, min(len(focus_path) + 1, target_depth))
 
                         if target_depth > 0:
-                            it_copy['indent'] = it['indent'] - focus_indents[target_depth - 1] - 2
-                        else:
-                            it_copy['indent'] = it['indent']
+                            it.indent = it.indent - focus_indents[target_depth - 1] - 2
 
-                        pos = 'before' if base_cmd_orig == 'N' else 'after'
-                        if target_depth == len(focus_path) + 1:
-                            # Child: ignore n/N for exact position, just append or prepend to notes
+                        if target_depth not in items_by_depth:
+                            items_by_depth[target_depth] = []
+                        items_by_depth[target_depth].append(it)
+
+                    for depth in sorted(items_by_depth.keys()):
+                        depth_items = items_by_depth[depth]
+                        for it in depth_items:
+                             if depth <= len(focus_path):
+                                 it.indent = focus_indents[depth]
+                             else:
+                                 it.indent = focus_indents[len(focus_path)] + 2
+
+                        if depth == len(focus_path) + 1:
                             child_pos = 'append' if base_cmd_orig == 'n' else 'prepend_notes'
-                            self._recursive_insert(target_task, focus_path, [it_copy], position=child_pos)
+                            self._recursive_insert(target_task, focus_path, depth_items, position=child_pos)
                         else:
-                            # Sibling or higher
-                            target_path = focus_path[:target_depth]
-                            self._recursive_insert(target_task, target_path, [it_copy], position=pos)
+                            pos = 'before' if base_cmd_orig == 'N' else 'after'
+                            target_path = focus_path[:depth]
+                            self._recursive_insert(target_task, target_path, depth_items, position=pos)
 
-                    self.commit_to_ledger(mode_label, [target_task])
-                    self.last_recorded_focus = target_task['line'].strip()
-                    if base_cmd_orig == 'N':
-                        self.task_start_time = None
+                self.commit_to_ledger(mode_label, [target_task])
+                self.last_recorded_focus = target_task.content.strip()
+                if base_cmd_orig == 'N':
+                    self.task_start_time = None
 
                 if self.last_msg.startswith("Note:"):
                     self.last_msg = f"{msg} ({self.last_msg})"
@@ -808,91 +891,37 @@ class FocusCLI:
 
         if top_level_items:
             any_changed = True
-            # Handle top-level items using standard stack logic
-            # (Notes are committed here but not added to triage_stack)
             self.commit_to_ledger(mode_label, top_level_items)
-
-            # Filter only items that are tasks (start with []) to add to the triage stack
-            top_level_tasks = [it for it in top_level_items if it['line'].strip().startswith('[]')]
-
-            # If we have top-level notes that aren't tasks, and we ARE in N1-style indexed mode,
-            # they were already committed to the ledger above but should NOT be added to stack.
-            # If we are in standard N/n mode, the original behavior for notes was...
-            # Wait, let's check N/n behavior for notes.
-            # In N mode: top_level_tasks are inserted at index 0. Notes are lost from stack but kept in ledger?
-            # Actually, current code for 'N':
-            # msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
-            # It only adds top_level_tasks to self.triage_stack.
+            top_level_tasks = [it for it in top_level_items if isinstance(it, Task)]
 
             if target_index is not None:
-                # Specified index insertion
                 insert_idx = target_index
                 if hier_items and target_index < len(self.triage_stack):
-                    # If we also added sub-items to an existing task, insert new tasks AFTER it
                     insert_idx += 1
-
-                # Cap insertion index at current stack size
                 insert_idx = min(insert_idx, len(self.triage_stack))
 
                 for it in reversed(top_level_tasks):
                     self.triage_stack.insert(insert_idx, it)
 
                 if insert_idx == 0 and top_level_tasks:
-                    self.last_recorded_focus = self.triage_stack[0]['line'].strip()
+                    self.last_recorded_focus = self.triage_stack[0].content.strip()
                     self.task_start_time = None
-
                 msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
-                if self.last_msg.startswith("Note:"):
-                    self.last_msg = f"{msg} ({self.last_msg})"
-                else:
-                    self.last_msg = msg
             elif base_cmd_orig == 'N':
-                # If we also had hierarchical items, and they targeted index 0 (N always does),
-                # we insert new top-level tasks at index 1 to preserve focus on the original task.
                 insert_idx = 1 if (hier_items and self.triage_stack) else 0
-
                 for it in reversed(top_level_tasks):
                     self.triage_stack.insert(insert_idx, it)
-
                 if insert_idx == 0 and top_level_tasks:
-                    self.last_recorded_focus = self.triage_stack[0]['line'].strip()
+                    self.last_recorded_focus = self.triage_stack[0].content.strip()
                     self.task_start_time = None
-
                 msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
-                if self.last_msg.startswith("Note:"):
-                    self.last_msg = f"{msg} ({self.last_msg})"
-                else:
-                    self.last_msg = msg
             else:
                 self.triage_stack.extend(top_level_tasks)
                 msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
-                if self.last_msg.startswith("Note:"):
-                    self.last_msg = f"{msg} ({self.last_msg})"
-                else:
-                    self.last_msg = msg
+
+            self.last_msg = f"{msg} ({self.last_msg})" if self.last_msg.startswith("Note:") else msg
 
         return any_changed
-
-    def _insert_hierarchical_batch(self, target, path, items, base_cmd_orig):
-        # Normalizes a batch of items (stripping the common 2-space prefix)
-        # and appends/prepends to target hierarchy.
-
-        # In Triage Mode (or whenever path is empty), 'before'/'after' don't make sense
-        # for leading items as there is no focus item to be relative to.
-        # Instead, we use 'prepend_notes' for N and 'append' for n.
-        if not path:
-            pos = 'prepend_notes' if base_cmd_orig == 'N' else 'append'
-        else:
-            pos = 'before' if base_cmd_orig == 'N' else 'after'
-
-        # Reverse items for prepend_notes/before to keep their original order
-        items_to_process = reversed(items) if pos in ['prepend_notes', 'before'] else items
-
-        for it in items_to_process:
-            # Shift item to be relative to target (e.g. 2 spaces -> 0 spaces)
-            it_copy = copy.deepcopy(it)
-            it_copy['indent'] = max(0, it['indent'] - 2)
-            self._recursive_insert(target, path, [it_copy], position=pos)
 
     def _transition_from_break_to_focus(self):
         now = time.time()
@@ -922,25 +951,18 @@ class FocusCLI:
         total = 0
 
         if parent_item is None:
-            # Top-level progress
             summary = self.get_daily_summary()
             completed = sum(summary['top'].values())
             pending = 0
             for it in self.triage_stack:
-                if it['line'].strip().startswith('[]') or it['line'].strip().startswith('[ ]'):
+                if isinstance(it, Task) and it.state == ' ':
                     pending += 1
             total = completed + pending
         else:
-            # Subtask level progress
-            for line in parent_item['notes']:
-                if line.startswith('  '):
-                    continue
-
-                marker_match = re.match(r'^\[([xe\->\s]?)\]', line.strip())
-                if marker_match:
+            for child in parent_item.children:
+                if isinstance(child, Task):
                     total += 1
-                    state = marker_match.group(1).strip()
-                    if state in ['x', '-', '>']:
+                    if child.state in ['x', '-', '>']:
                         completed += 1
 
         return completed, total
@@ -954,14 +976,12 @@ class FocusCLI:
         except OSError:
             term_width = 65
 
-        # Bar label: " Completed 5/30"
         label = f" Completed {completed}/{total}"
-        max_bar_width = term_width - len(label) - 2 # 2 for brackets []
+        max_bar_width = term_width - len(label) - 2
         if max_bar_width < 10:
-             # Fallback if terminal is very narrow
              return f"[{completed}/{total}]"
 
-        bar_width = min(40, max_bar_width) # Cap bar at 40 chars or terminal width
+        bar_width = min(40, max_bar_width)
         filled_width = int(round((completed / total) * bar_width))
 
         bar = "#" * filled_width + " " * (bar_width - filled_width)
@@ -974,27 +994,22 @@ class FocusCLI:
 
         new_item = copy.deepcopy(item)
         idx = path[0]
-        sub_item, end_idx = self._get_subtask_as_item(new_item, idx)
 
-        pruned_sub = self._get_path_pruned_item(sub_item, path[1:], leaf_item)
+        if not isinstance(new_item, Task) or idx >= len(new_item.children):
+            return new_item
 
-        # Rebuild notes: keep non-task notes and the path-relevant subtask
-        new_notes = []
-        current_idx = 0
-        while current_idx < len(item['notes']):
-            if current_idx == idx:
-                new_notes.append(pruned_sub['line'])
-                for sn in pruned_sub['notes']:
-                    new_notes.append(f"  {sn}")
-                _, next_idx = self._get_subtask_as_item(item, current_idx)
-                current_idx = next_idx
-            else:
-                line = item['notes'][current_idx]
-                if not re.match(r'^(\s*)\[([xe\->\s]?)\]\s*', line):
-                    new_notes.append(line)
-                current_idx += 1
+        child = new_item.children[idx]
+        pruned_child = self._get_path_pruned_item(child, path[1:], leaf_item)
 
-        new_item['notes'] = new_notes
+        new_children = []
+        for i, c in enumerate(new_item.children):
+            if i == idx:
+                new_children.append(pruned_child)
+                pruned_child.parent = new_item
+            elif isinstance(c, Note):
+                new_children.append(c)
+
+        new_item.children = new_children
         return new_item
 
     def commit_to_ledger(self, mode_label, items, target_file=None):
@@ -1002,27 +1017,26 @@ class FocusCLI:
         with open(dest, 'a') as f:
             f.write(f"\n------- {mode_label} {get_timestamp()} -------\n")
             if items:
-                for t in items:
-                    f.write(f"{t['line']}\n")
-                    for n in t['notes']:
-                        f.write(f"  {n}\n")
+                for item in items:
+                    if isinstance(item, Item):
+                        f.write(f"{item.to_ledger()}\n")
+                    else:
+                        f.write(f"{item.get('line', item)}\n")
+                        for n in item.get('notes', []):
+                            f.write(f"  {n}\n")
 
     def update_mini_timer(self):
         if not self.mini_timer_active:
             return
-
         now = time.time()
-
         if self.mode == "FOCUS" and self.triage_stack:
             if self.mini_timer_last_tick == 0:
                 self.mini_timer_last_tick = now
-
             elapsed = now - self.mini_timer_last_tick
             if elapsed >= 1.0:
                 ticks = int(elapsed)
                 self.mini_timer_remaining -= ticks
                 self.mini_timer_last_tick += ticks
-
             if self.mini_timer_remaining <= 0:
                 if now - self.mini_timer_last_chime_timestamp >= 30:
                     self.play_chime(sound='tick')
@@ -1034,16 +1048,12 @@ class FocusCLI:
         if CHIME_COMMAND:
             subprocess.Popen(shlex.split(CHIME_COMMAND), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
-
-        # Fallback chain
         if sound == 'chime':
             linux_file = "/usr/share/sounds/freedesktop/stereo/complete.oga"
             macos_file = "/System/Library/Sounds/Glass.aiff"
         else:
-            # For 'tick', use something sharper/shorter
             linux_file = "/usr/share/sounds/freedesktop/stereo/bell.oga"
             macos_file = "/System/Library/Sounds/Tink.aiff"
-
         commands = []
         if sys.platform == "darwin":
             commands.append(["afplay", macos_file])
@@ -1051,17 +1061,13 @@ class FocusCLI:
         else:
             commands.append(["paplay", linux_file])
             commands.append(["play", linux_file])
-
         for cmd in commands:
             try:
-                # Check if command exists
                 if subprocess.call(["which", cmd[0]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
                     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     return
             except Exception:
                 continue
-
-        # Final fallback to terminal bell
         sys.stdout.write('\a')
         sys.stdout.flush()
 
@@ -1070,7 +1076,6 @@ class FocusCLI:
         if self.mode == "BREAK":
             elapsed_break = now - self.break_start_time
             remaining = self.break_duration * 60 - elapsed_break
-
             if remaining <= 0 or self.break_meeting_interrupted:
                 if now - self.last_chime_timestamp >= 60:
                     self.play_chime()
@@ -1080,8 +1085,7 @@ class FocusCLI:
         elif self.mode in ["FOCUS", "TRIAGE"]:
             is_meeting = False
             if self.mode == "FOCUS" and self.triage_stack:
-                is_meeting = parse_meeting_time(self.triage_stack[0]['line']) is not None
-
+                is_meeting = isinstance(self.triage_stack[0], Meeting)
             if self.focus_start_time:
                 focus_elapsed = now - self.focus_start_time
                 if focus_elapsed >= self.focus_threshold:
@@ -1092,10 +1096,14 @@ class FocusCLI:
 
     def is_meeting_active(self):
         if not self.triage_stack: return False
-        m_time = parse_meeting_time(self.triage_stack[0]['line'])
-        if not m_time: return False
-        now_dt = datetime.now()
-        return m_time[0] <= now_dt < m_time[1]
+        item = self.triage_stack[0]
+        if isinstance(item, Meeting):
+            if not item.start_time or not item.end_time:
+                m_time = parse_meeting_time(item.content)
+                if m_time:
+                    item.start_time, item.end_time = m_time
+            return item.is_active()
+        return False
 
     def check_meetings(self):
         if self.mode not in ["FOCUS", "BREAK"]: return
@@ -1103,29 +1111,30 @@ class FocusCLI:
 
         now = datetime.now()
         found_active_meeting = False
-        for i, task in enumerate(self.triage_stack):
-            m_time = parse_meeting_time(task['line'])
-            if m_time and m_time[0] <= now < m_time[1]:
-                meeting_id = f"{task['line']}_{m_time[0]}"
+        for i, item in enumerate(self.triage_stack):
+            is_active_meeting = False
+            if isinstance(item, Meeting):
+                 is_active_meeting = item.is_active(now=now)
+
+            if is_active_meeting:
+                state_str = item.state if item.state.strip() else ''
+                meeting_id = f"[{state_str}] {item.content}_{item.start_time}"
                 if meeting_id not in self.chimed_meetings:
                     if self.mode == "BREAK":
                         self.break_meeting_interrupted = True
                     self.play_chime()
                     self.chimed_meetings.add(meeting_id)
-                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
-                    self.last_msg = f"Meeting Starting: {task_content}"
+                    self.last_msg = f"Meeting Starting: {item.content}"
 
                 if self.mode == "FOCUS":
                     if i > 0 and not found_active_meeting:
-                        current_task = self.triage_stack[0]
-                        current_m_time = parse_meeting_time(current_task['line'])
-                        is_current_active_meeting = current_m_time and current_m_time[0] <= now < current_m_time[1]
+                        current_item = self.triage_stack[0]
+                        is_current_active_meeting = isinstance(current_item, Meeting) and current_item.is_active()
 
                         if not is_current_active_meeting:
                             self.triage_stack.insert(0, self.triage_stack.pop(i))
                             self.task_start_time = None
-                            task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', self.triage_stack[0]['line'])
-                            self.last_msg = f"Meeting Started: {task_content}"
+                            self.last_msg = f"Meeting Started: {self.triage_stack[0].content}"
                             found_active_meeting = True
 
                     if i == 0:
@@ -1134,35 +1143,23 @@ class FocusCLI:
     def render_break(self):
         elapsed_break = time.time() - self.break_start_time
         remaining = int(self.break_duration * 60 - elapsed_break)
-
-        sign = ""
-        if remaining < 0:
-            sign = "-"
-            abs_rem = abs(remaining)
-        else:
-            abs_rem = remaining
-
-        m, s = divmod(abs_rem, 60)
+        sign = "-" if remaining < 0 else ""
+        m, s = divmod(abs(remaining), 60)
         time_str = f"{sign}{m:02d}:{s:02d}"
-
         color = "\033[1;34m"
         header = " BREAK SESSION "
         if remaining <= 0 or self.break_meeting_interrupted:
             color = "\033[1;31;7m"
             header = " !! BREAK EXPIRED !! " if remaining <= 0 else " !! MEETING STARTING !! "
-
         print(color + "="*65 + "\033[0m")
         print(f"{color}{header}\033[0m | Remaining: {time_str}")
         print(color + "="*65 + "\033[0m")
-
         print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
-
         print("\n" + color + "-"*65 + "\033[0m")
         print("Cmds: [N#] prioritize, [n#] add, [t] triage, [f] focus, [q] quit")
 
     def update_timer_ui(self):
-        """Minimal redraw of just the header to preserve terminal selection."""
-        sys.stdout.write("\033[s") # Save cursor
+        sys.stdout.write("\033[s")
         now = time.time()
         if self.mode == "TRIAGE":
             focus_elapsed = int(now - (self.focus_start_time if self.focus_start_time else now))
@@ -1171,30 +1168,23 @@ class FocusCLI:
             fm, fs = divmod(abs(focus_remaining), 60)
             f_color = "\033[1;31m" if focus_remaining <= 0 else ""
             timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
-
             sys.stdout.write("\033[1;1H" + f"\033[K--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
         elif self.mode == "FOCUS":
             if not self.triage_stack: return
             if self.task_start_time is None: self.task_start_time = now
             if self.focus_start_time is None: self.focus_start_time = now
-
-            top_task = self.triage_stack[0]
+            top_item = self.triage_stack[0]
             focus_elapsed = int(now - self.focus_start_time)
             focus_remaining = self.focus_threshold - focus_elapsed
             f_sign = "-" if focus_remaining < 0 else ""
             fm, fs = divmod(abs(focus_remaining), 60)
-
-            meeting_time = None
-            if self.triage_stack:
-                meeting_time = parse_meeting_time(top_task['line'])
             meeting_timer_str = ""
-            if meeting_time:
+            if isinstance(top_item, Meeting) and top_item.end_time:
                 now_dt = datetime.now()
-                remaining = int((meeting_time[1] - now_dt).total_seconds())
+                remaining = int((top_item.end_time - now_dt).total_seconds())
                 m_sign = "-" if remaining < 0 else ""
                 mm, ms = divmod(abs(remaining), 60)
                 meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
-
             mini_timer_str = ""
             is_mini_session = False
             if self.mini_timer_active and self.triage_stack:
@@ -1202,19 +1192,16 @@ class FocusCLI:
                 sign = "-" if self.mini_timer_remaining < 0 else ""
                 mm, ms = divmod(abs(self.mini_timer_remaining), 60)
                 mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
-
             task_timer_str = ""
             if not (meeting_timer_str and mini_timer_str):
                 task_elapsed = int(now - self.task_start_time)
                 tm, ts = divmod(task_elapsed, 60)
                 task_timer_str = f" | Task: {tm:02d}:{ts:02d}"
-
             color = "\033[1;34m"
             header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
             if focus_elapsed > self.focus_threshold:
                 color = "\033[1;31;7m"
                 header = " !! BREAK TIME !! "
-
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
             sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m{task_timer_str} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
             sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
@@ -1228,12 +1215,10 @@ class FocusCLI:
             if remaining <= 0 or self.break_meeting_interrupted:
                 color = "\033[1;31;7m"
                 header = " !! BREAK EXPIRED !! " if remaining <= 0 else " !! MEETING STARTING !! "
-
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
             sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Remaining: {sign}{m:02d}:{s:02d}")
             sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
-
-        sys.stdout.write("\033[u") # Restore cursor
+        sys.stdout.write("\033[u")
         sys.stdout.flush()
 
     def _read_keypress(self, fd):
@@ -1241,15 +1226,11 @@ class FocusCLI:
         try:
             b = os.read(fd, 1)
             if not b: return None
-
-            # UTF-8 multi-byte character handling
             if (b[0] & 0x80) != 0 and b[0] != 0x1b:
-                # Count leading 1s to determine length
                 if (b[0] & 0xE0) == 0xC0: length = 2
                 elif (b[0] & 0xF0) == 0xE0: length = 3
                 elif (b[0] & 0xF8) == 0xF0: length = 4
-                else: return b.decode('utf-8', errors='ignore') # Invalid leading byte
-
+                else: return b.decode('utf-8', errors='ignore')
                 seq = b
                 for _ in range(length - 1):
                     r, _, _ = select.select([fd], [], [], 0.1)
@@ -1257,12 +1238,9 @@ class FocusCLI:
                         next_b = os.read(fd, 1)
                         if not next_b: break
                         seq += next_b
-                    else:
-                        break
+                    else: break
                 return seq.decode('utf-8', errors='ignore')
-
             if b == b'\x1b':
-                # burst read for escape sequences
                 seq = b
                 while True:
                     r, _, _ = select.select([fd], [], [], 0.02)
@@ -1270,736 +1248,417 @@ class FocusCLI:
                         next_b = os.read(fd, 1)
                         if not next_b: break
                         seq += next_b
-                        # CSI terminators are 0x40-0x7E
-                        if len(seq) >= 3 and seq[1:2] == b'[' and (0x40 <= seq[-1] <= 0x7E):
-                            break
-                        # SS3 terminators
-                        if len(seq) == 3 and seq[1:2] == b'O':
-                            break
+                        if len(seq) >= 3 and seq[1:2] == b'[' and (0x40 <= seq[-1] <= 0x7E): break
+                        if len(seq) == 3 and seq[1:2] == b'O': break
                         if len(seq) > 10: break
-                    else:
-                        break
+                    else: break
                 return seq.decode('utf-8', errors='ignore')
-            else:
-                return b.decode('utf-8', errors='ignore')
-        except Exception:
-            return None
+            else: return b.decode('utf-8', errors='ignore')
+        except Exception: return None
 
     def run(self):
         fd = sys.stdin.fileno()
         self.original_termios = termios.tcgetattr(fd)
-
         def signal_handler(sig, frame):
             self._rescue_stack("Interrupted (SIGTERM)")
-            if self.original_termios:
-                termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+            if self.original_termios: termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
             sys.exit(0)
-
         signal.signal(signal.SIGTERM, signal_handler)
-
-        # Check for previous tasks if this is the first launch for today's file
-        if not os.path.exists(FILENAME):
-            self.rescue_previous_tasks()
-
-        # Always open in Free Write mode at start
+        if not os.path.exists(FILENAME): self.rescue_previous_tasks()
         self.enter_free_write()
         self.focus_start_time = time.time()
         try:
-            # Set terminal to cbreak mode for the main input loop
             tty.setcbreak(fd)
-            buffer = ""
-            cursor_pos = 0
-            last_render_second = -1
-            last_buffer = None
-            last_cursor_pos = None
-            last_mode = None
-            last_msg = None
-            last_task = None
-            last_expired = False
-            last_exceeded = False
-
+            buffer = ""; cursor_pos = 0; last_render_second = -1; last_buffer = None
+            last_cursor_pos = None; last_mode = None; last_msg = None; last_task = None
+            last_expired = False; last_exceeded = False
             while True:
-                now = time.time()
-                current_second = int(now)
+                now = time.time(); current_second = int(now)
                 current_task = self.triage_stack[0] if self.triage_stack else None
-
                 is_expired = False
                 if self.mode == "BREAK":
                     elapsed_break = now - self.break_start_time
                     is_expired = (elapsed_break >= self.break_duration * 60)
-
                 is_exceeded = False
                 if self.mode == "FOCUS" and self.focus_start_time:
                     focus_elapsed = now - self.focus_start_time
                     is_exceeded = (focus_elapsed > self.focus_threshold)
-
-                structural_change = (
-                    buffer != last_buffer or
-                    cursor_pos != last_cursor_pos or
-                    self.mode != last_mode or
-                    self.last_msg != last_msg or
-                    current_task != last_task or
-                    is_expired != last_expired or
-                    is_exceeded != last_exceeded
-                )
-
+                structural_change = (buffer != last_buffer or cursor_pos != last_cursor_pos or self.mode != last_mode or self.last_msg != last_msg or current_task != last_task or is_expired != last_expired or is_exceeded != last_exceeded)
                 if structural_change:
                     sys.stdout.write("\033[H\033[2J")
-                    if self.mode == "TRIAGE":
-                        self.render_triage()
-                    elif self.mode == "FOCUS":
-                        self.render_focus()
-                    elif self.mode == "BREAK":
-                        self.render_break()
-                    elif self.mode == "EXIT":
-                        self.render_exit()
-
+                    if self.mode == "TRIAGE": self.render_triage()
+                    elif self.mode == "FOCUS": self.render_focus()
+                    elif self.mode == "BREAK": self.render_break()
+                    elif self.mode == "EXIT": self.render_exit()
                     print(f"\n\033[90mStatus: {self.last_msg}\033[0m")
-                    prompt = ">> "
-                    sys.stdout.write(f"\033[1;37m{prompt}\033[0m{buffer}")
-
-                    # Manual cursor positioning for the prompt line
-                    # Note: This is a simplified positioning that doesn't handle multi-line cursor placement perfectly
-                    # but since we're using full-screen redraw, it's sufficient for the user to see where they are.
-                    # We move cursor back by (len(buffer) - cursor_pos)
+                    prompt = ">> "; sys.stdout.write(f"\033[1;37m{prompt}\033[0m{buffer}")
                     if cursor_pos < len(buffer):
                         move_back = len(buffer) - cursor_pos
                         sys.stdout.write(f"\033[{move_back}D")
-
                     sys.stdout.flush()
-
-                    last_render_second = current_second
-                    last_buffer = buffer
-                    last_cursor_pos = cursor_pos
-                    last_mode = self.mode
-                    last_msg = self.last_msg
-                    last_task = copy.deepcopy(current_task)
-                    last_expired = is_expired
-                    last_exceeded = is_exceeded
-
+                    last_render_second = current_second; last_buffer = buffer; last_cursor_pos = cursor_pos
+                    last_mode = self.mode; last_msg = self.last_msg; last_task = copy.deepcopy(current_task)
+                    last_expired = is_expired; last_exceeded = is_exceeded
                 elif current_second != last_render_second:
-                    if self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
-                        self.update_timer_ui()
+                    if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.update_timer_ui()
                     last_render_second = current_second
-
-                if self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
-                    self.check_chime()
-
+                if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.check_chime()
                 if self.mode in ["FOCUS", "BREAK"]:
                     self.check_meetings()
-                    if self.mode == "FOCUS":
-                        self.update_mini_timer()
-
+                    if self.mode == "FOCUS": self.update_mini_timer()
                 rlist, _, _ = select.select([fd], [], [], 0.1)
                 if rlist:
                     char = self._read_keypress(fd)
                     if not char: continue
-
                     if char == ' ' and self.mode == "FOCUS" and self.mini_timer_active and not buffer:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
                         self.mini_timer_last_tick = time.time()
                         self.mini_timer_last_chime_timestamp = 0
                         self.last_msg = "Mini Timer Reset"
                     elif char == '\n' or char == '\r':
-                        cmd = buffer.strip()
-                        buffer = ""
-
+                        cmd = buffer.strip(); buffer = ""
                         if not cmd and self.mode != "EXIT":
-                            last_mode = None # Force redraw on empty enter
-                            cursor_pos = 0
-                            continue
-
-                        # Restore terminal for command processing
-                        termios.tcsetattr(fd, termios.TCSANOW, self.original_termios)
-                        print()
-                        result = self.handle_command(cmd)
-                        tty.setcbreak(fd)
-                        cursor_pos = 0
-
-                        if result == "QUIT":
-                            print() # Ensure newline for shell prompt
-                            break
-
-                        # For all other results (None, REDRAW, etc)
-                        if result == "REDRAW":
-                            last_mode = None
+                            last_mode = None; cursor_pos = 0; continue
+                        termios.tcsetattr(fd, termios.TCSANOW, self.original_termios); print()
+                        result = self.handle_command(cmd); tty.setcbreak(fd); cursor_pos = 0
+                        if result == "QUIT": print(); break
+                        if result == "REDRAW": last_mode = None
                         continue
-                    elif char in ['\x7f', '\x08']: # Backspace
-                        if cursor_pos > 0:
-                            buffer = buffer[:cursor_pos-1] + buffer[cursor_pos:]
-                            cursor_pos -= 1
-                    elif char == '\x03': # Ctrl+C
-                        raise KeyboardInterrupt
-                    elif char.startswith('\x1b'): # ESC sequence
+                    elif char in ['\x7f', '\x08']:
+                        if cursor_pos > 0: buffer = buffer[:cursor_pos-1] + buffer[cursor_pos:]; cursor_pos -= 1
+                    elif char == '\x03': raise KeyboardInterrupt
+                    elif char.startswith('\x1b'):
                         seq = char
-                        if seq in ['\x1b[D', '\x1bOD']: # Left Arrow
+                        if seq in ['\x1b[D', '\x1bOD']:
                             if cursor_pos > 0: cursor_pos -= 1
-                        elif seq in ['\x1b[C', '\x1bOC']: # Right Arrow
+                        elif seq in ['\x1b[C', '\x1bOC']:
                             if cursor_pos < len(buffer): cursor_pos += 1
-                        elif seq in ['\x1b[H', '\x1b[1~', '\x1bOH']: # Home
-                            cursor_pos = 0
-                        elif seq in ['\x1b[F', '\x1b[4~', '\x1bOF']: # End
-                            cursor_pos = len(buffer)
-                        elif seq in ['\x1b[A', '\x1bOA', '\x1b[B', '\x1bOB']: # Up/Down Arrows
-                            pass # Just swallow them
-                        elif seq in ['\x1b[3~']: # Delete
-                            if cursor_pos < len(buffer):
-                                buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
-                        else:
-                            logging.info(f"Unhandled escape sequence: {repr(seq)}")
-                    elif char == '\x01': # Ctrl+A (Home)
-                        cursor_pos = 0
-                    elif char == '\x05': # Ctrl+E (End)
-                        cursor_pos = len(buffer)
-                    elif char == '\x04': # Ctrl+D (Delete)
-                        if cursor_pos < len(buffer):
-                            buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
-                    elif len(char) == 1 and ord(char) >= 32: # Only printable characters
-                        buffer = buffer[:cursor_pos] + char + buffer[cursor_pos:]
-                        cursor_pos += 1
-        except KeyboardInterrupt:
-            self._rescue_stack("Interrupted")
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+                        elif seq in ['\x1b[H', '\x1b[1~', '\x1bOH']: cursor_pos = 0
+                        elif seq in ['\x1b[F', '\x1b[4~', '\x1bOF']: cursor_pos = len(buffer)
+                        elif seq in ['\x1b[3~']:
+                            if cursor_pos < len(buffer): buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
+                    elif char == '\x01': cursor_pos = 0
+                    elif char == '\x05': cursor_pos = len(buffer)
+                    elif char == '\x04':
+                        if cursor_pos < len(buffer): buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
+                    elif len(char) == 1 and ord(char) >= 32:
+                        buffer = buffer[:cursor_pos] + char + buffer[cursor_pos:]; cursor_pos += 1
+        except KeyboardInterrupt: self._rescue_stack("Interrupted")
+        finally: termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
     def render_triage(self):
         now = time.time()
         focus_elapsed = int(now - (self.focus_start_time if self.focus_start_time else now))
         focus_remaining = self.focus_threshold - focus_elapsed
-        f_sign = "-" if focus_remaining < 0 else ""
-        fm, fs = divmod(abs(focus_remaining), 60)
-
+        f_sign = "-" if focus_remaining < 0 else ""; fm, fs = divmod(abs(focus_remaining), 60)
         f_color = "\033[1;31m" if focus_remaining <= 0 else ""
         timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
-
         print(f"--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
-
         meetings = []
-        for i, t in enumerate(self.triage_stack):
-            m_time = parse_meeting_time(t['line'])
-            if m_time:
-                meetings.append({'idx': i, 'start': m_time[0], 'end': m_time[1]})
-
+        for i, item in enumerate(self.triage_stack):
+            if isinstance(item, Meeting) and item.start_time and item.end_time:
+                meetings.append({'idx': i, 'start': item.start_time, 'end': item.end_time})
         overlapping_indices = set()
         for i in range(len(meetings)):
             for j in range(i + 1, len(meetings)):
-                m1 = meetings[i]
-                m2 = meetings[j]
+                m1 = meetings[i]; m2 = meetings[j]
                 if m1['start'] < m2['end'] and m2['start'] < m1['end']:
-                    overlapping_indices.add(m1['idx'])
-                    overlapping_indices.add(m2['idx'])
-
+                    overlapping_indices.add(m1['idx']); overlapping_indices.add(m2['idx'])
         visible_count = 0
-        for i, t in enumerate(self.triage_stack):
-            if i in overlapping_indices:
-                color = OVERLAP_COLOR
-            elif parse_meeting_time(t['line']):
-                color = MEETING_COLOR
-            elif '[]' in t['line']:
-                color = "\033[1;36m"
-            else:
-                color = ""
-            print(f"{i}: {color}{t['line']}\033[0m")
-            for j, n in enumerate(t['notes']):
-                n_color = "\033[1;36m" if '[]' in n else ""
-                print(f"   {i}.{j}: {n_color}{n}\033[0m")
+        for i, item in enumerate(self.triage_stack):
+            if i in overlapping_indices: color = OVERLAP_COLOR
+            elif isinstance(item, Meeting): color = MEETING_COLOR
+            elif isinstance(item, Task): color = "\033[1;36m"
+            else: color = ""
+            display_line = item.to_ledger().split('\n')[0].strip()
+            print(f"{i}: {color}{display_line}\033[0m")
+            if isinstance(item, Task):
+                for j, child in enumerate(item.children):
+                    n_color = "\033[1;36m" if isinstance(child, Task) and child.state == ' ' else ""
+                    child_display = child.to_ledger().split('\n')[0].strip()
+                    print(f"   {i}.{j}: {n_color}{child_display}\033[0m")
             visible_count += 1
-        
-        if visible_count == 0:
-            print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
-        else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [w] free write, [i#] ignore, [N#] prioritize, [n#] add, [>>] defer all, [b#] break, [f] focus, [q] quit")
+        if visible_count == 0: print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
+        else: print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [w] free write, [i#] ignore, [N#] prioritize, [n#] add, [>>] defer all, [b#] break, [f] focus, [q] quit")
 
     def render_exit(self):
         summary = self.get_daily_summary()
         print(f"\n\033[1;32mDAILY SCORECARD ({os.path.basename(FILENAME)})\033[0m")
-
-        # Finished [x]
         print(f"  Finished  [x]: {summary['top']['[x]'] + summary['sub']['[x]']}")
         print(f"    - Top-level: {summary['top']['[x]']}")
         print(f"    - Subtasks:  {summary['sub']['[x]']}")
-
-        # Cancelled [-]
         print(f"  Cancelled [-]: {summary['top']['[-]'] + summary['sub']['[-]']}")
         print(f"    - Top-level: {summary['top']['[-]']}")
         print(f"    - Subtasks:  {summary['sub']['[-]']}")
-
-        # Deferred [>]
         print(f"  Deferred  [>]: {summary['top']['[>]'] + summary['sub']['[>]']}")
         print(f"    - Top-level: {summary['top']['[>]']}")
         print(f"    - Subtasks:  {summary['sub']['[>]']}")
-
         print("="*35)
         self.last_msg = "Enter 'q' to quit or 'w' to return to Free Write..."
 
     def render_focus(self):
-        if not self.triage_stack:
-            return
-        
+        if not self.triage_stack: return
         now = time.time()
         if self.task_start_time is None: self.task_start_time = now
         if self.focus_start_time is None: self.focus_start_time = now
-
-        task_elapsed = int(now - self.task_start_time)
-        tm, ts = divmod(task_elapsed, 60)
-
+        task_elapsed = int(now - self.task_start_time); tm, ts = divmod(task_elapsed, 60)
         focus_elapsed = int(now - self.focus_start_time)
         focus_remaining = self.focus_threshold - focus_elapsed
-        f_sign = "-" if focus_remaining < 0 else ""
-        fm, fs = divmod(abs(focus_remaining), 60)
-        
-        if not self.triage_stack:
-            return
-        top_task = self.triage_stack[0]
-        focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
-
-        # Handle "Task Started" ledger entry
-        # We only log "Task Started" when the root task changes.
-        root_id = top_task['line'].strip()
+        f_sign = "-" if focus_remaining < 0 else ""; fm, fs = divmod(abs(focus_remaining), 60)
+        top_item = self.triage_stack[0]
+        focus_item, parent_item, focus_path = self._get_recursive_focus(top_item)
+        root_id = top_item.to_ledger().split('\n')[0].strip()
         if root_id != self.last_recorded_focus:
             if not focus_path:
                 item_to_record = copy.deepcopy(focus_item)
-                item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
+                if isinstance(item_to_record, Task):
+                    item_to_record.children = [c for c in item_to_record.children if not (isinstance(c, Task) and c.state != ' ')]
                 self.commit_to_ledger("Task Started", [item_to_record])
             else:
-                # Build full path from top for ledger context
                 item_to_record = copy.deepcopy(focus_item)
-                item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
-
-                hierarchical_context = self._get_path_pruned_item(top_task, focus_path, item_to_record)
-                # Ensure root of this context is marked pending
-                if not hierarchical_context['line'].strip().startswith('[]'):
-                     hierarchical_context['line'] = re.sub(r'^(\s*)\[([xe\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
-                     if not hierarchical_context['line'].strip().startswith('[]'):
-                         hierarchical_context['line'] = f"[] {hierarchical_context['line'].lstrip()}"
-
+                if isinstance(item_to_record, Task):
+                    item_to_record.children = [c for c in item_to_record.children if not (isinstance(c, Task) and c.state != ' ')]
+                hierarchical_context = self._get_path_pruned_item(top_item, focus_path, item_to_record)
+                if isinstance(hierarchical_context, Task): hierarchical_context.state = ' '
                 self.commit_to_ledger("Task Started", [hierarchical_context])
             self.last_recorded_focus = root_id
-
         t = focus_item
-        meeting_time = parse_meeting_time(top_task['line'])
         meeting_timer_str = ""
-        if meeting_time:
-            now_dt = datetime.now()
-            remaining = int((meeting_time[1] - now_dt).total_seconds())
-            m_sign = "-" if remaining < 0 else ""
-            mm, ms = divmod(abs(remaining), 60)
+        if isinstance(top_item, Meeting) and top_item.end_time:
+            now_dt = datetime.now(); remaining = int((top_item.end_time - now_dt).total_seconds())
+            m_sign = "-" if remaining < 0 else ""; mm, ms = divmod(abs(remaining), 60)
             meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
-
-        mini_timer_str = ""
-        is_mini_session = False
+        mini_timer_str = ""; is_mini_session = False
         if self.mini_timer_active and self.triage_stack:
-            is_mini_session = True
-            sign = "-" if self.mini_timer_remaining < 0 else ""
-            mm, ms = divmod(abs(self.mini_timer_remaining), 60)
-            mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
-
+            is_mini_session = True; sign = "-" if self.mini_timer_remaining < 0 else ""
+            mm, ms = divmod(abs(self.mini_timer_remaining), 60); mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
         task_timer_str = ""
         if not (meeting_timer_str and mini_timer_str):
-            task_timer_str = f" | Task: {tm:02d}:{ts:02d}"
-
-        color = "\033[1;34m"
-        header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
-        if focus_elapsed > self.focus_threshold:
-            color = "\033[1;31;7m"
-            header = " !! BREAK TIME !! "
-
-        is_task = t['line'].startswith('[]')
-        print(color + "="*65 + "\033[0m")
+            task_elapsed = int(now - self.task_start_time); tm, ts = divmod(task_elapsed, 60); task_timer_str = f" | Task: {tm:02d}:{ts:02d}"
+        color = "\033[1;34m"; header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
+        if focus_elapsed > self.focus_threshold: color = "\033[1;31;7m"; header = " !! BREAK TIME !! "
+        is_task = isinstance(t, Task); print(color + "="*65 + "\033[0m")
         print(f"{color}{header}\033[0m{task_timer_str} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
         print(color + "="*65 + "\033[0m")
-        
         if parent_item:
-            parent_display = re.sub(r'^\[\s?\]\s*', '', parent_item['line'])
-            print(f"\n\033[1;34mPARENT TASK >>\n{parent_display}\033[0m")
-
-        # Progress Bar
+            parent_display = parent_item.content; print(f"\n\033[1;34mPARENT TASK >>\n{parent_display}\033[0m")
         completed, total = self._get_progress_stats(focus_item, parent_item)
         if total > 0:
             p_bar = self._render_progress_bar(completed, total)
-            if p_bar:
-                print(f"\n\033[1;36m{p_bar}\033[0m")
-
-        display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
-        if is_task:
-            print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
-        else:
-            print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
-        for i, n in enumerate(t['notes']):
-            n_color = "\033[1;36m" if '[]' in n else ""
-            print(f"  {i}: {n_color}{n}\033[0m")
+            if p_bar: print(f"\n\033[1;36m{p_bar}\033[0m")
+        display_line = t.content
+        if is_task: print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
+        else: print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
+        if isinstance(t, Task):
+            for i, child in enumerate(t.children):
+                n_color = "\033[1;36m" if isinstance(child, Task) and child.state == ' ' else ""
+                child_display = child.to_ledger().split('\n')[0].strip()
+                print(f"  {i}: {n_color}{child_display}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
         extra_cmds = ", [Space] reset" if is_mini_session else ""
         print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [w] free write, [m#] mini{extra_cmds}, [N#] prioritize, [n#] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
-        self.last_msg = "" # Reset status message
+        self.last_msg = ""
         try:
             cmd_clean = re.sub(r'^([a-zA-Z])(\d)', r'\1 \2', cmd)
-            try:
-                parts = shlex.split(cmd_clean)
+            try: parts = shlex.split(cmd_clean)
             except ValueError:
-                # Handle unbalanced quotes by appending a closing quote if possible
                 if '"' in cmd_clean:
-                    try:
-                        parts = shlex.split(cmd_clean + '"')
-                        self.last_msg = "Note: Added missing closing quote."
-                    except ValueError:
-                        self.last_msg = "Error: Unbalanced quotes."
-                        return
-                else:
-                    parts = cmd_clean.split()
-
+                    try: parts = shlex.split(cmd_clean + '"'); self.last_msg = "Note: Added missing closing quote."
+                    except ValueError: self.last_msg = "Error: Unbalanced quotes."; return
+                else: parts = cmd_clean.split()
             if self.mode == "EXIT":
-                if not parts or parts[0].lower() == 'q':
-                    return "QUIT"
-                if parts[0].lower() == 'w':
-                    self.enter_free_write()
-                    return "REDRAW"
+                if not parts or parts[0].lower() == 'q': return "QUIT"
+                if parts[0].lower() == 'w': self.enter_free_write(); return "REDRAW"
                 return
-
             if not parts: return
-            base_cmd_orig = parts[0]
-            base_cmd = base_cmd_orig.lower()
-            
+            base_cmd_orig = parts[0]; base_cmd = base_cmd_orig.lower()
             if base_cmd == 'q':
                 if self.triage_stack:
-                    # Restore terminal for input()
                     fd = sys.stdin.fileno()
-                    if self.original_termios:
-                        termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+                    if self.original_termios: termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
                     print(f"\n\033[1;33m[!] Session Interrupted.\033[0m")
-                    res = input("Rescue remaining tasks to Free Write? (y/n): ").lower()
-                    tty.setcbreak(fd)
-                    if res == 'y':
-                        self._rescue_stack("Interrupted")
-                    else:
-                        self.commit_to_ledger("Interrupted", [])
+                    res = input("Rescue remaining tasks to Free Write? (y/n): ").lower(); tty.setcbreak(fd)
+                    if res == 'y': self._rescue_stack("Interrupted")
+                    else: self.commit_to_ledger("Interrupted", [])
                 else:
-                    if self.mode in ["FOCUS", "BREAK"]:
-                        self.commit_to_ledger("Focus Session Complete", [])
-                    else:
-                        self.commit_to_ledger("Triage", [])
-                self.mode = "EXIT"
-                return "REDRAW"
-
+                    if self.mode in ["FOCUS", "BREAK"]: self.commit_to_ledger("Focus Session Complete", [])
+                    else: self.commit_to_ledger("Triage", [])
+                self.mode = "EXIT"; return "REDRAW"
             if base_cmd == 't': 
-                self.commit_to_ledger("Triage Session Started at", [])
-                self.sort_triage_stack()
-                self.mode = "TRIAGE"; self.task_start_time = None
-                self.break_start_time = None
+                self.commit_to_ledger("Triage Session Started at", []); self.sort_triage_stack()
+                self.mode = "TRIAGE"; self.task_start_time = None; self.break_start_time = None
                 if self.focus_start_time is None: self.focus_start_time = time.time()
                 return
-
-            if base_cmd == 'w' and self.mode in ["FOCUS", "TRIAGE"]:
-                self.enter_free_write()
-                return "REDRAW"
-
+            if base_cmd == 'w' and self.mode in ["FOCUS", "TRIAGE"]: self.enter_free_write(); return "REDRAW"
             if (base_cmd == 'n' or base_cmd == 'N') and self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
                 target_idx = None
-                # Check for n# or N# pattern which was split into ['n', '#'] or ['N', '#']
-                if len(parts) > 1 and parts[1].isdigit():
-                    target_idx = int(parts[1])
-                    remaining_parts = parts[2:]
-                else:
-                    remaining_parts = parts[1:]
-
+                if len(parts) > 1 and parts[1].isdigit(): target_idx = int(parts[1]); remaining_parts = parts[2:]
+                else: remaining_parts = parts[1:]
                 items = []
                 if remaining_parts is not None:
                     if remaining_parts:
-                        # One-line addition
-                        full_line = " ".join(remaining_parts)
-                        m = re.match(r'^(\s*)', full_line)
-                        indent_len = len(m.group(1))
-                        content = full_line[indent_len:]
+                        full_line = " ".join(remaining_parts); m = re.match(r'^(\s*)', full_line)
+                        indent_len = len(m.group(1)); content = full_line[indent_len:]
                         items = [{'line': content, 'notes': [], 'indent': indent_len}]
                     else:
                         context = None
                         if (self.mode in ["FOCUS", "BREAK"] or target_idx is not None) and self.triage_stack:
-                            # Only show context if we are NOT targeting a specific index
-                            # OR if the index is 0 (current focus)
                             if target_idx is None or target_idx == 0:
-                                top_task = self.triage_stack[0]
-                                focus_item, _, focus_path = self._get_recursive_focus(top_task)
-
-                                # Building hierarchical context string (just the focused item)
+                                top_item = self.triage_stack[0]; focus_item, _, focus_path = self._get_recursive_focus(top_item)
                                 context = []
                                 if focus_path:
-                                    # Find the indentation of the focus item
-                                    indent = ""
-                                    curr = top_task
-                                    for idx in focus_path:
-                                        sub, _ = self._get_subtask_as_item(curr, idx)
-                                        # Every subtask is 2 spaces deeper than its parent line
-                                        indent += "  "
-                                        curr = sub
-                                    context.append(f"{indent}{focus_item['line']}")
+                                    indent = ""; curr = top_item
+                                    for idx in focus_path: indent += "  "; curr = curr.children[idx]
+                                    context.append(f"{indent}{focus_item.to_ledger().strip()}")
                             elif target_idx < len(self.triage_stack):
-                                # Context for targeting a specific task at an index
-                                target_task = self.triage_stack[target_idx]
-                                context = [target_task['line']]
-
+                                target_task = self.triage_stack[target_idx]; context = [target_task.to_ledger().strip()]
                         lines = self._get_multi_line_input(context_lines=context)
                         items = self._process_multi_line_input(lines)
-
-                    if not items:
-                        return
-
-                # Delegate all addition logic to the hierarchical handler
+                    if not items: return
                 self._handle_hierarchical_new_items(base_cmd_orig, items, target_index=target_idx)
-
                 if (base_cmd_orig == 'N' or target_idx is not None) and self.mode == "FOCUS":
                     if self.mini_timer_active:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = time.time()
-                        self.mini_timer_last_chime_timestamp = 0
+                        self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
                     self.check_meetings()
-
-                self.initial_stack = copy.deepcopy(self.triage_stack)
-                return
-
+                self.initial_stack = copy.deepcopy(self.triage_stack); return
             if self.mode == "BREAK":
-                if base_cmd == 'f':
-                    self._transition_from_break_to_focus()
-                    return
-                elif base_cmd == 'b':
-                    self.last_msg = "Break time overload! Doing nothing."
-                    self.break_quote = random.choice(BREAK_QUOTES)
-                    return
-                elif base_cmd in ['n', 'N']:
-                    pass # Handled by shared FOCUS/BREAK logic
-                elif base_cmd in ['t', 'q']:
-                    pass # Handled by common logic
-                else:
-                    self.last_msg = "Command disabled during break."
-                    return
-
+                if base_cmd == 'f': self._transition_from_break_to_focus(); return
+                elif base_cmd == 'b': self.last_msg = "Break time overload! Doing nothing."; self.break_quote = random.choice(BREAK_QUOTES); return
+                elif base_cmd in ['n', 'N']: pass
+                elif base_cmd in ['t', 'q']: pass
+                else: self.last_msg = "Command disabled during break."; return
             if self.mode == "TRIAGE":
                 if base_cmd == 'f':
-                    now = datetime.now()
-                    new_stack = []
-                    for t in self.triage_stack:
-                        m_time = parse_meeting_time(t['line'])
-                        if m_time and m_time[1] < now:
-                            # Meeting already ended
-                            task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', t['line'])
-                            t['line'] = f"[x] {task_content}"
-                            t['notes'] = [f"[x] " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in t['notes']]
-                            self.commit_to_ledger("Meeting Auto-Completed", [t])
-                            continue
-                        new_stack.append(t)
-                    self.triage_stack = new_stack
-
-                    active = self.triage_stack
+                    now = datetime.now(); new_stack = []
+                    for item in self.triage_stack:
+                        if isinstance(item, Meeting) and item.end_time and item.end_time < now:
+                            item.state = 'x'
+                            for child in item.children:
+                                if isinstance(child, Task): child.state = 'x'
+                            self.commit_to_ledger("Meeting Auto-Completed", [item]); continue
+                        new_stack.append(item)
+                    self.triage_stack = new_stack; active = self.triage_stack
                     items_to_write = active if active != self.initial_stack else []
                     self.commit_to_ledger("Triage", items_to_write)
-                    self.triage_stack = active
-                    self.mode = "FOCUS"; self.last_msg = ""
-                    if self.mini_timer_active:
-                        self.mini_timer_last_tick = time.time()
-                    self.last_chime_timestamp = 0
-                    self.initial_stack = copy.deepcopy(self.triage_stack)
+                    self.triage_stack = active; self.mode = "FOCUS"; self.last_msg = ""
+                    if self.mini_timer_active: self.mini_timer_last_tick = time.time()
+                    self.last_chime_timestamp = 0; self.initial_stack = copy.deepcopy(self.triage_stack)
                 elif base_cmd == 'i':
-                    if len(parts) > 1:
-                        idx = int(parts[1])
-                    elif len(self.triage_stack) == 1:
-                        idx = 0
-                    else:
-                        # Fallback to existing behavior if multiple items but no index
-                        idx = int(parts[1])
-
-                    item = self.triage_stack.pop(idx)
-                    if item['line'].strip().startswith('[]'):
-                        # It's a task, mark as cancelled
-                        resolved_item = self._prepare_task_with_markers(item, '[-]', '[-]')
-                        self.commit_to_ledger("Cancelled", [resolved_item])
+                    idx = int(parts[1]) if len(parts) > 1 else (0 if len(self.triage_stack) == 1 else None)
+                    if idx is not None:
+                        item = self.triage_stack.pop(idx)
+                        if isinstance(item, Task): resolved_item = self._prepare_task_with_markers(item, '-', '-'); self.commit_to_ledger("Cancelled", [resolved_item])
                 elif base_cmd == 'p':
                     src, dest = int(parts[1]), int(parts[2]) if len(parts) > 2 else 0
                     self.triage_stack.insert(dest, self.triage_stack.pop(src))
                 elif base_cmd == 'a':
                     src_str, dest_idx = parts[1], int(parts[2])
-                    item = self.triage_stack[int(src_str.split('.')[0])]['notes'].pop(int(src_str.split('.')[1])) if '.' in src_str else self.triage_stack.pop(int(src_str))['line']
-                    self.triage_stack[dest_idx]['notes'].append(item)
+                    if '.' in src_str:
+                        p_idx, c_idx = map(int, src_str.split('.'))
+                        item = self.triage_stack[p_idx].children.pop(c_idx); item.parent = self.triage_stack[dest_idx]
+                        self.triage_stack[dest_idx].children.append(item)
+                    else:
+                        item = self.triage_stack.pop(int(src_str)); item.parent = self.triage_stack[dest_idx]
+                        self.triage_stack[dest_idx].children.append(item)
                 elif base_cmd == 'e':
                     idx = int(parts[1]) if len(parts) > 1 else 0
                     if 0 <= idx < len(self.triage_stack):
-                        self.triage_stack[idx] = self._edit_item(self.triage_stack[idx])
+                        self.triage_stack[idx] = self._edit_item_obj(self.triage_stack[idx])
                         self.initial_stack = copy.deepcopy(self.triage_stack)
-
                 elif base_cmd == 'b':
                     duration = 5
                     if len(parts) > 1:
-                        try:
-                            duration = int(parts[1])
-                        except ValueError:
-                            self.last_msg = f"Invalid break duration: {parts[1]}"
-                            return
-
-                    if duration <= 0:
-                        self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
-                        return
-
-                    self.mode = "BREAK"
-                    self.break_meeting_interrupted = False
-                    self.break_duration = duration
-                    self.break_start_time = time.time()
-                    self.break_quote = random.choice(BREAK_QUOTES)
-                    self.last_chime_timestamp = 0
-                    self.commit_to_ledger(f"Break for {duration} at", [])
-                    return
-
+                        try: duration = int(parts[1])
+                        except ValueError: self.last_msg = f"Invalid break duration: {parts[1]}"; return
+                    if duration <= 0: self.last_msg = "Seriously? Take a real break! 0 minutes is too short."; return
+                    self.mode = "BREAK"; self.break_meeting_interrupted = False; self.break_duration = duration
+                    self.break_start_time = time.time(); self.break_quote = random.choice(BREAK_QUOTES)
+                    self.last_chime_timestamp = 0; self.commit_to_ledger(f"Break for {duration} at", []); return
                 elif base_cmd in ['>', '>>']:
-                    if self._handle_defer_command(base_cmd, parts):
-                        return
-
+                    if self._handle_defer_command_obj(base_cmd, parts): return
             elif self.mode in ["FOCUS", "BREAK"]:
                 if not self.triage_stack:
-                    if base_cmd == 'q':
-                        return "QUIT"
-                    if base_cmd != 'n':
-                        return
-
-                top_task = self.triage_stack[0]
-                focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
-                is_note = not focus_item['line'].startswith('[]')
-
+                    if base_cmd == 'q': return "QUIT"
+                    if base_cmd != 'n': return
+                top_item = self.triage_stack[0]; focus_item, parent_item, focus_path = self._get_recursive_focus(top_item)
+                is_note = isinstance(focus_item, Note)
                 if base_cmd == 'b' and self.mode == "FOCUS":
                     duration = 5
                     if len(parts) > 1:
-                        try:
-                            duration = int(parts[1])
-                        except ValueError:
-                            self.last_msg = f"Invalid break duration: {parts[1]}"
-                            return
-
-                    if duration <= 0:
-                        self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
-                        return
-
-                    self.mode = "BREAK"
-                    self.break_meeting_interrupted = False
-                    self.break_duration = duration
-                    self.break_start_time = time.time()
-                    self.break_quote = random.choice(BREAK_QUOTES)
-                    self.last_chime_timestamp = 0
-                    self.commit_to_ledger(f"Break for {duration} at", [])
-                    return
-
-
+                        try: duration = int(parts[1])
+                        except ValueError: self.last_msg = f"Invalid break duration: {parts[1]}"; return
+                    if duration <= 0: self.last_msg = "Seriously? Take a real break! 0 minutes is too short."; return
+                    self.mode = "BREAK"; self.break_meeting_interrupted = False; self.break_duration = duration
+                    self.break_start_time = time.time(); self.break_quote = random.choice(BREAK_QUOTES)
+                    self.last_chime_timestamp = 0; self.commit_to_ledger(f"Break for {duration} at", []); return
                 if base_cmd == 'e':
-                    new_item = self._edit_item(focus_item)
+                    new_item = self._edit_item_obj(focus_item)
                     if new_item != focus_item:
-                        self._update_recursive_item(top_task, focus_path, new_item)
+                        self._update_recursive_item(top_item, focus_path, new_item)
                         self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
-
                 if base_cmd == 'm' and self.mode == "FOCUS":
                     if len(parts) > 1:
                         try:
                             duration = int(parts[1])
-                            if duration <= 0:
-                                self.mini_timer_active = False
-                                self.last_msg = "Mini Timer Stopped"
+                            if duration <= 0: self.mini_timer_active = False; self.last_msg = "Mini Timer Stopped"
                             else:
-                                self.mini_timer_active = True
-                                self.mini_timer_duration = duration
-                                self.mini_timer_remaining = duration * 60
-                                self.mini_timer_last_tick = time.time()
-                                self.mini_timer_last_chime_timestamp = 0
+                                self.mini_timer_active = True; self.mini_timer_duration = duration; self.mini_timer_remaining = duration * 60
+                                self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
                                 self.last_msg = f"Mini Timer Started: {duration}m"
-                        except ValueError:
-                            self.last_msg = f"Invalid mini timer duration: {parts[1]}"
+                        except ValueError: self.last_msg = f"Invalid mini timer duration: {parts[1]}"
                     else:
-                        if self.mini_timer_active:
-                            self.mini_timer_active = False
-                            self.last_msg = "Mini Timer Stopped"
+                        if self.mini_timer_active: self.mini_timer_active = False; self.last_msg = "Mini Timer Stopped"
                         else:
-                            self.mini_timer_active = True
-                            self.mini_timer_duration = 2
-                            self.mini_timer_remaining = 2 * 60
-                            self.mini_timer_last_tick = time.time()
-                            self.mini_timer_last_chime_timestamp = 0
+                            self.mini_timer_active = True; self.mini_timer_duration = 2; self.mini_timer_remaining = 2 * 60
+                            self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
                             self.last_msg = "Mini Timer Started: 2m"
                     return
-
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:
-                    if self.mode == "BREAK":
-                        self.last_msg = "Command disabled during break."
-                        return
+                    if self.mode == "BREAK": self.last_msg = "Command disabled during break."; return
                     idx = int(match_x.group(1))
-                    if 0 <= idx < len(focus_item['notes']):
-                        focus_item['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', focus_item['notes'][idx])
-                        self._update_recursive_item(top_task, focus_path, focus_item)
-                        if self.mini_timer_active:
-                            self.mini_timer_remaining = self.mini_timer_duration * 60
-                            self.mini_timer_last_tick = time.time()
-                            self.mini_timer_last_chime_timestamp = 0
+                    if isinstance(focus_item, Task) and 0 <= idx < len(focus_item.children):
+                        child = focus_item.children[idx]
+                        if isinstance(child, Task):
+                            child.state = 'x'
+                            self._update_recursive_item(top_item, focus_path, focus_item)
+                            if self.mini_timer_active:
+                                self.mini_timer_remaining = self.mini_timer_duration * 60
+                                self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
                     return
-
                 if is_note and base_cmd in ['x', '-', 'i']:
-                    if self.mode == "BREAK":
-                        self.last_msg = "Command disabled during break."
-                        return
-                    # Notes are always top-level in triage_stack if they were returned as focus_item with empty path
-                    if not focus_path:
-                        self.triage_stack.pop(0)
-                    else:
-                        # This shouldn't happen with current recursive logic but let's be safe
-                        pass
-                    self.task_start_time = None
-                    self.initial_stack = copy.deepcopy(self.triage_stack)
-                    return
-
+                    if self.mode == "BREAK": self.last_msg = "Command disabled during break."; return
+                    if not focus_path: self.triage_stack.pop(0)
+                    else: pass
+                    self.task_start_time = None; self.initial_stack = copy.deepcopy(self.triage_stack); return
                 if base_cmd in ['x', '-', '>', '>>', 'i']:
-                    if self.mode == "BREAK":
-                        self.last_msg = "Command disabled during break."
-                        return
-
+                    if self.mode == "BREAK": self.last_msg = "Command disabled during break."; return
                     if base_cmd == '>>' or base_cmd == '>':
-                        if self._handle_defer_command(base_cmd, parts):
-                            return
-
+                        if self._handle_defer_command_obj(base_cmd, parts): return
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
-                    marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
-                    ledger_label = {'x': 'Task Completed', '-': 'Task Cancelled', '>': 'Task Deferred'}[effective_cmd]
-
-                    # Resolve item
+                    marker = 'x' if effective_cmd == 'x' else ('-' if effective_cmd == '-' else '>')
+                    ledger_label = 'Task Completed' if effective_cmd == 'x' else ('Task Cancelled' if effective_cmd == '-' else 'Task Deferred')
                     resolved_item = self._prepare_task_with_markers(focus_item, marker, marker)
-                    
                     if not focus_path:
                         item_to_record = self.triage_stack.pop(0)
-                        # Ensure we commit the RESOLVED version
                         resolved_top = self._prepare_task_with_markers(item_to_record, marker, marker)
                         self.commit_to_ledger(ledger_label, [resolved_top])
                     else:
-                        self._update_recursive_item(top_task, focus_path, resolved_item)
-                        # Build full path from top for ledger context
-                        hierarchical_context = self._get_path_pruned_item(top_task, focus_path, resolved_item)
-
-                        # Ensure root of this context is marked pending if it's not the focused item
-                        if not hierarchical_context['line'].startswith('[]') and not focus_path == []:
-                             # Use regex to replace/add marker
-                             hierarchical_context['line'] = re.sub(r'^(\s*)\[([xe\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
-                             if not hierarchical_context['line'].strip().startswith('[]'):
-                                 hierarchical_context['line'] = f"[] {hierarchical_context['line'].lstrip()}"
-
+                        self._update_recursive_item(top_item, focus_path, resolved_item)
+                        hierarchical_context = self._get_path_pruned_item(top_item, focus_path, resolved_item)
+                        if isinstance(hierarchical_context, Task) and focus_path != []: hierarchical_context.state = ' '
                         self.commit_to_ledger(ledger_label, [hierarchical_context])
-
                     if self.mini_timer_active:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = time.time()
-                        self.mini_timer_last_chime_timestamp = 0
-                    self.task_start_time = None
-                    self.initial_stack = copy.deepcopy(self.triage_stack)
-
+                        self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
+                    self.task_start_time = None; self.initial_stack = copy.deepcopy(self.triage_stack)
                     if not self.triage_stack and self.mode == "FOCUS":
-                        self.commit_to_ledger("Focus Session Complete", [])
-                        self.mode = "EXIT"
-                        return "REDRAW"
-
-        except Exception as e:
-            self.last_msg = f"Error: {e}"
+                        self.commit_to_ledger("Focus Session Complete", []); self.mode = "EXIT"; return "REDRAW"
+        except Exception as e: self.last_msg = f"Error: {e}"
         return None
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ class TestMeetingInterruption(unittest.TestCase):
         meeting_end = meeting_start + timedelta(minutes=5)
 
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 5m"
-        self.cli.triage_stack = [{'line': meeting_text, 'notes': []}]
+        self.cli.triage_stack = [self.cli._parse_single_line(meeting_text)]
 
         # 2. Start a break
         self.cli.mode = "BREAK"
@@ -56,7 +56,7 @@ class TestMeetingInterruption(unittest.TestCase):
         meeting_end = now + timedelta(minutes=5)
 
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 10m"
-        self.cli.triage_stack = [{'line': meeting_text, 'notes': []}]
+        self.cli.triage_stack = [self.cli._parse_single_line(meeting_text)]
 
         # Mark as already chimed
         meeting_id = f"{meeting_text}_{meeting_start.replace(second=0, microsecond=0)}"

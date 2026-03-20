@@ -185,6 +185,33 @@ class Item:
         self.indent = indent
         self.parent = None
 
+    @staticmethod
+    def from_lines(lines):
+        """Builds a tree of items from a list of indented lines using a stack."""
+        root_items = []
+        stack = [] # list of Item objects
+
+        for line in lines:
+            line_raw = line.rstrip()
+            if not line_raw.strip(): continue
+
+            item = parse_single_line(line_raw)
+
+            # Adjust current_path
+            while stack and stack[-1].indent >= item.indent:
+                stack.pop()
+
+            if not stack:
+                root_items.append(item)
+            else:
+                parent = stack[-1]
+                if isinstance(parent, Task):
+                    item.parent = parent
+                    parent.children.append(item)
+
+            stack.append(item)
+        return root_items
+
     def to_ledger(self):
         """Returns the raw string for file writing."""
         return f"{' ' * self.indent}{self.content}"
@@ -222,6 +249,27 @@ class Task(Item):
     @property
     def is_complete(self):
         return self.state == 'x'
+
+    def clone_with_state(self, main_state, pending_sub_state):
+        """Helper to create a copy of a task with updated markers for pending items."""
+        new_item = copy.deepcopy(self)
+
+        def process_item(it, state):
+            if isinstance(it, Task):
+                if it.state == ' ':
+                    it.state = state
+                for child in it.children:
+                    process_item(child, pending_sub_state)
+
+        if new_item.state == ' ':
+            new_item.state = main_state
+        for child in new_item.children:
+            process_item(child, pending_sub_state)
+
+        if main_state == '>':
+             new_item.content = strip_meeting_time(new_item.content)
+
+        return new_item
 
     def to_ledger(self):
         state_str = self.state if self.state.strip() else ''
@@ -327,37 +375,35 @@ class FocusCLI:
         with open(FILENAME, 'r') as f:
             lines = f.readlines()
 
-        latest_states = {} # full_path_key -> (state, level)
+        latest_states = {} # full_path_key -> (state, is_top)
         stack = [] # current hierarchy of (content, indent)
 
         for line in lines:
-            line_raw = line.rstrip('\n\r')
-            if not line_raw.strip() or "-------" in line_raw:
-                continue
+            line_raw = line.rstrip()
+            if not line_raw.strip(): continue
 
-            item = self._parse_single_line(line_raw)
-            level = item.indent // 2
+            if "-------" in line_raw: continue
+
+            item = parse_single_line(line_raw)
 
             while stack and stack[-1][1] >= item.indent:
                 stack.pop()
 
-            parent_path = " > ".join(c for c, i in stack)
-            full_key = f"{parent_path} > {item.content}" if parent_path else item.content
+            parent_path = tuple(c for c, i in stack)
+            full_key = parent_path + (item.content,)
+            is_top = not stack
 
             if isinstance(item, Task):
-                latest_states[full_key] = (item.state, level)
+                latest_states[full_key] = (item.state, is_top)
 
             stack.append((item.content, item.indent))
 
-        for key, (state, level) in latest_states.items():
+        for key, (state, is_top) in latest_states.items():
             if state in ['x', '-', '>']:
                 label = f"[{state}]"
-                if level == 0:
-                    if label in counts['top']:
-                        counts['top'][label] += 1
-                else:
-                    if label in counts['sub']:
-                        counts['sub'][label] += 1
+                category = 'top' if is_top else 'sub'
+                if label in counts[category]:
+                    counts[category][label] += 1
         return counts
 
     def _run_with_vi(self, args):
@@ -448,7 +494,7 @@ class FocusCLI:
                     ledger_items = []
                     for task in pending_tasks:
                         # Current ledger version: main task [>], pending subtasks [>], others preserve
-                        l_task = self._prepare_task_with_markers(task, '>', '>')
+                        l_task = task.clone_with_state('>', '>')
                         ledger_items.append(l_task)
 
                     self.commit_to_ledger(label, ledger_items, target_file=prev_file)
@@ -460,7 +506,7 @@ class FocusCLI:
                         rescued_task = copy.deepcopy(task)
                         rescued_task.content = strip_meeting_time(rescued_task.content)
                         # Target version: main task [], subtasks preserve status
-                        t_task = self._prepare_task_with_markers(rescued_task, ' ', ' ')
+                        t_task = rescued_task.clone_with_state(' ', ' ')
                         all_rescued_tasks.append(t_task)
 
         if all_rescued_tasks:
@@ -571,28 +617,8 @@ class FocusCLI:
                 os.remove(temp_path)
 
     def _process_multi_line_input(self, lines):
-        """Parse multi-line input into items, preserving absolute indentation levels."""
-        if not lines:
-            return []
-
-        items = []
-        current_item = None
-
-        for line in lines:
-            if not line.strip(): continue
-
-            m = re.match(r'^(\s*)', line)
-            indent_len = len(m.group(1))
-            content = line[indent_len:]
-
-            if not current_item or indent_len <= current_item['indent']:
-                current_item = {'line': content, 'notes': [], 'indent': indent_len}
-                items.append(current_item)
-            else:
-                note_rel = line[current_item['indent'] + 2:] if len(line) >= current_item['indent'] + 2 else line.lstrip()
-                current_item['notes'].append(note_rel)
-
-        return items
+        """Parse multi-line input into Item objects."""
+        return Item.from_lines(lines)
 
     def _edit_item_obj(self, item):
         original_item = copy.deepcopy(item)
@@ -609,15 +635,10 @@ class FocusCLI:
 
             if not new_lines: return item
 
-            first_line = new_lines[0]
-            new_item = self._parse_single_line(first_line)
+            new_root_items = Item.from_lines(new_lines)
+            if not new_root_items: return item
+            new_item = new_root_items[0]
             new_item.indent = original_item.indent
-
-            if isinstance(new_item, Task):
-                for line in new_lines[1:]:
-                    child = self._parse_single_line(line)
-                    child.parent = new_item
-                    new_item.children.append(child)
 
             if new_item.to_ledger() != original_item.to_ledger():
                 edited_old = copy.deepcopy(original_item)
@@ -655,8 +676,12 @@ class FocusCLI:
             today_str = datetime.now().strftime(DATE_FORMAT)
             is_current_file_today = today_str in FILENAME
 
-            target = self._prepare_task_with_markers(item, ' ', ' ')
-            ledger = self._prepare_task_with_markers(item, '>', '>')
+            if isinstance(item, Task):
+                target = item.clone_with_state(' ', ' ')
+                ledger = item.clone_with_state('>', '>')
+            else:
+                target = copy.deepcopy(item)
+                ledger = copy.deepcopy(item)
 
             res = "today" if (is_target_today and is_current_file_today) else get_target_file(target_date)
             return ledger, target, res
@@ -691,27 +716,6 @@ class FocusCLI:
         self.initial_stack = copy.deepcopy(self.triage_stack)
         return True
 
-    def _prepare_task_with_markers(self, item, main_state, pending_sub_state):
-        """Helper to create a copy of a task with updated markers for pending items."""
-        new_item = copy.deepcopy(item)
-
-        def process_item(it, state):
-            if isinstance(it, Task):
-                if it.state == ' ':
-                    it.state = state
-                for child in it.children:
-                    process_item(child, pending_sub_state)
-
-        if isinstance(new_item, Task):
-            if new_item.state == ' ':
-                new_item.state = main_state
-            for child in new_item.children:
-                process_item(child, pending_sub_state)
-
-        if main_state == '>' and isinstance(new_item, Task):
-             new_item.content = strip_meeting_time(new_item.content)
-
-        return new_item
 
     def _get_recursive_focus(self, item):
         """Recursively find the deepest pending task."""
@@ -783,7 +787,7 @@ class FocusCLI:
 
         return False
 
-    def _handle_hierarchical_new_items(self, base_cmd_orig, raw_items, target_index=None):
+    def _handle_hierarchical_new_items(self, base_cmd_orig, items, target_index=None):
         """Processes a batch of items and inserts them into the task tree."""
         if target_index is not None:
             mode_label = f"New Entry(s) at index {target_index}"
@@ -792,17 +796,6 @@ class FocusCLI:
 
         any_changed = False
 
-        def to_obj(raw, base_indent=0):
-            obj = self._parse_single_line(raw['line'])
-            obj.indent = raw['indent'] + base_indent
-            if isinstance(obj, Task):
-                for n in raw['notes']:
-                    child = to_obj({'line': n, 'indent': 2, 'notes': []}, obj.indent)
-                    child.parent = obj
-                    obj.children.append(child)
-            return obj
-
-        items = [to_obj(it) for it in raw_items]
         top_level_items = [it for it in items if it.indent == 0]
         hier_items = [it for it in items if it.indent > 0]
 
@@ -1474,9 +1467,8 @@ class FocusCLI:
                 items = []
                 if remaining_parts is not None:
                     if remaining_parts:
-                        full_line = " ".join(remaining_parts); m = re.match(r'^(\s*)', full_line)
-                        indent_len = len(m.group(1)); content = full_line[indent_len:]
-                        items = [{'line': content, 'notes': [], 'indent': indent_len}]
+                        full_line = " ".join(remaining_parts)
+                        items = self._process_multi_line_input([full_line])
                     else:
                         context = None
                         if (self.mode in ["FOCUS", "BREAK"] or target_idx is not None) and self.triage_stack:
@@ -1525,7 +1517,7 @@ class FocusCLI:
                     idx = int(parts[1]) if len(parts) > 1 else (0 if len(self.triage_stack) == 1 else None)
                     if idx is not None:
                         item = self.triage_stack.pop(idx)
-                        if isinstance(item, Task): resolved_item = self._prepare_task_with_markers(item, '-', '-'); self.commit_to_ledger("Cancelled", [resolved_item])
+                        if isinstance(item, Task): resolved_item = item.clone_with_state('-', '-'); self.commit_to_ledger("Cancelled", [resolved_item])
                 elif base_cmd == 'p':
                     src, dest = int(parts[1]), int(parts[2]) if len(parts) > 2 else 0
                     self.triage_stack.insert(dest, self.triage_stack.pop(src))
@@ -1617,10 +1609,10 @@ class FocusCLI:
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
                     marker = 'x' if effective_cmd == 'x' else ('-' if effective_cmd == '-' else '>')
                     ledger_label = 'Task Completed' if effective_cmd == 'x' else ('Task Cancelled' if effective_cmd == '-' else 'Task Deferred')
-                    resolved_item = self._prepare_task_with_markers(focus_item, marker, marker)
+                    resolved_item = focus_item.clone_with_state(marker, marker) if isinstance(focus_item, Task) else focus_item
                     if not focus_path:
                         item_to_record = self.triage_stack.pop(0)
-                        resolved_top = self._prepare_task_with_markers(item_to_record, marker, marker)
+                        resolved_top = item_to_record.clone_with_state(marker, marker) if isinstance(item_to_record, Task) else item_to_record
                         self.commit_to_ledger(ledger_label, [resolved_top])
                     else:
                         self._update_recursive_item(top_item, focus_path, resolved_item)

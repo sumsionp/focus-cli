@@ -23,7 +23,7 @@ class TestOneLineAdd(unittest.TestCase):
         self.cli.handle_command('n "[] Task 2"')
 
         self.assertEqual(len(self.cli.triage_stack), 2)
-        self.assertEqual(self.cli.triage_stack[1]['line'], "[] Task 2")
+        self.assertEqual(self.cli.triage_stack[1].content, "Task 2")
         self.assertEqual(self.cli.last_msg, "Task(s) Added")
 
     def test_N_one_line_top_level(self):
@@ -33,8 +33,8 @@ class TestOneLineAdd(unittest.TestCase):
         self.cli.handle_command('N "[] Task 2"')
 
         self.assertEqual(len(self.cli.triage_stack), 2)
-        self.assertEqual(self.cli.triage_stack[0]['line'], "[] Task 2")
-        self.assertEqual(self.cli.triage_stack[1]['line'], "[] Task 1")
+        self.assertEqual(self.cli.triage_stack[0].content, "Task 2")
+        self.assertEqual(self.cli.triage_stack[1].content, "Task 1")
         self.assertEqual(self.cli.last_msg, "Task(s) Added & Prioritized")
 
     def test_n_one_line_subtask(self):
@@ -45,7 +45,7 @@ class TestOneLineAdd(unittest.TestCase):
         self.cli.handle_command('n "  [] Subtask 1"')
 
         self.assertEqual(len(self.cli.triage_stack), 1)
-        self.assertIn("[] Subtask 1", self.cli.triage_stack[0]['notes'])
+        self.assertTrue(any(c.content == "Subtask 1" for c in self.cli.triage_stack[0].children))
 
     def test_N_one_line_subtask_focus_mode(self):
         self.cli.mode = "FOCUS"
@@ -62,11 +62,10 @@ class TestOneLineAdd(unittest.TestCase):
         # N "    [] Sub 3" should add Sub 3 as a sibling of Sub 2, before Sub 2
         self.cli.handle_command('N "    [] Sub 3"')
 
-        self.assertEqual(self.cli.triage_stack[0]['notes'], [
-            '[] Sub 1',
-            '  [] Sub 3', # New sibling before focus
-            '  [] Sub 2'  # Old focus pushed down
-        ])
+        # Check children of Sub 1
+        sub1 = self.cli.triage_stack[0].children[0]
+        self.assertEqual(sub1.children[0].content, "Sub 3")
+        self.assertEqual(sub1.children[1].content, "Sub 2")
 
     def test_n_one_line_note_filtered(self):
         self.cli.mode = "TRIAGE"
@@ -86,9 +85,9 @@ class TestOneLineAdd(unittest.TestCase):
         self.cli.handle_command('n "    [] Sub Sub 1"')
 
         # In Triage mode, any leading subtask is relative to index 0.
-        # _insert_hierarchical_batch strips 2 spaces.
-        # "    [] Sub Sub 1" (4 spaces) -> "  [] Sub Sub 1" (2 spaces)
-        self.assertEqual(self.cli.triage_stack[0]['notes'], ["  [] Sub Sub 1"])
+        self.assertEqual(self.cli.triage_stack[0].children[0].content, "Sub Sub 1")
+        # Check that indentation was preserved correctly (absolute)
+        self.assertEqual(self.cli.triage_stack[0].children[0].indent, 4)
 
     def test_n_unbalanced_quotes(self):
         self.cli.mode = "TRIAGE"
@@ -98,7 +97,7 @@ class TestOneLineAdd(unittest.TestCase):
         self.cli.handle_command('n "[] My task')
 
         self.assertEqual(len(self.cli.triage_stack), 1)
-        self.assertEqual(self.cli.triage_stack[0]['line'], "[] My task")
+        self.assertEqual(self.cli.triage_stack[0].content, "My task")
         self.assertEqual(self.cli.last_msg, "Task(s) Added (Note: Added missing closing quote.)")
 
 if __name__ == '__main__':

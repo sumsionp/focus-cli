@@ -204,22 +204,6 @@ class Item:
             return False
         return self.to_ledger() == other.to_ledger()
 
-    def __getitem__(self, key):
-        if key == 'line':
-            return self.to_ledger().strip()
-        elif key == 'notes':
-            return []
-        elif key == 'indent':
-            return self.indent
-        elif key == 'content':
-            return self.content
-        raise KeyError(key)
-
-    def get(self, key, default=None):
-        try:
-            return self[key]
-        except KeyError:
-            return default
 
 class Note(Item):
     """A plain text entry with no state or children."""
@@ -244,42 +228,6 @@ class Task(Item):
             lines.append(child.to_ledger())
         return "\n".join(lines)
 
-    def __getitem__(self, key):
-        if key == 'line':
-            # Tests expect '[]' if state is ' '
-            state_str = self.state if self.state.strip() else ''
-            marker = f"[{state_str}]"
-            return f"{marker} {self.content}"
-        elif key == 'notes':
-            def get_flat_notes(item, top_base_indent):
-                flat = []
-                for child in item.children:
-                    rel_indent = " " * max(0, child.indent - (top_base_indent + 2))
-                    state_str = child.state if isinstance(child, Task) and child.state.strip() else ''
-                    marker = f"[{state_str}] " if isinstance(child, Task) else ""
-                    content = child.content.strip()
-                    flat.append(f"{rel_indent}{marker}{content}")
-                    if isinstance(child, Task):
-                        flat.extend(get_flat_notes(child, top_base_indent))
-                return flat
-            return get_flat_notes(self, self.indent)
-        return super().__getitem__(key)
-
-    def __setitem__(self, key, value):
-        if key == 'notes':
-            self.children = []
-            for line in value:
-                m = re.match(r'^(\s*)', line)
-                rel_indent_len = len(m.group(1))
-                abs_indent = rel_indent_len + self.indent + 2
-                child = parse_single_line(line)
-                child.indent = abs_indent
-                child.parent = self
-                self.children.append(child)
-        elif key == 'indent':
-            self.indent = value
-        else:
-            pass
 
 class Meeting(Task):
     """A task that specifically maps to a time window."""
@@ -1018,12 +966,7 @@ class FocusCLI:
             f.write(f"\n------- {mode_label} {get_timestamp()} -------\n")
             if items:
                 for item in items:
-                    if isinstance(item, Item):
-                        f.write(f"{item.to_ledger()}\n")
-                    else:
-                        f.write(f"{item.get('line', item)}\n")
-                        for n in item.get('notes', []):
-                            f.write(f"  {n}\n")
+                    f.write(f"{item.to_ledger()}\n")
 
     def update_mini_timer(self):
         if not self.mini_timer_active:

@@ -5,6 +5,9 @@ import time
 import sys
 import os
 
+# Ensure the root directory is in sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 # Mock FILENAME before importing FocusCLI
 os.environ['FOCUS_FILENAME'] = 'test-plan.txt'
 
@@ -59,7 +62,7 @@ class TestMeetingInterruption(unittest.TestCase):
         self.cli.triage_stack = [self.cli._parse_single_line(meeting_text)]
 
         # Mark as already chimed
-        meeting_id = f"{meeting_text}_{meeting_start.replace(second=0, microsecond=0)}"
+        meeting_id = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 10m_{meeting_start.replace(second=0, microsecond=0)}"
         self.cli.chimed_meetings.add(meeting_id)
 
         # 2. Start a break

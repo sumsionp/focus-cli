@@ -164,27 +164,13 @@ def parse_single_line(line):
     indent = len(indent_match.group(1)) if indent_match else 0
     clean = line.strip()
 
-    # Header check
-    header_match = re.match(r'^------- (.*?) ([0-9/:\sAPM]+) -------$', clean)
-    if header_match:
-        return Header(header_match.group(1).strip(), header_match.group(2).strip(), indent)
+    header = Header.from_line(clean, indent)
+    if header:
+        return header
 
-    if clean.startswith('-------') and clean.endswith('-------'):
-        label = clean.strip('-').strip()
-        return Header(label, "", indent)
-
-    # Task/Meeting check
-    task_match = re.match(r'^\[([xeB\->\s]?)\]\s*(.*)', clean)
-    if task_match:
-        state_char = task_match.group(1)
-        state = state_char if state_char and not state_char.isspace() else ' '
-        content = task_match.group(2)
-
-        m_time = parse_meeting_time(content)
-        if m_time or state == 'B':
-            start, end = m_time if m_time else (None, None)
-            return Meeting(content, indent, state, start, end)
-        return Task(content, indent, state)
+    task = Task.from_line(clean, indent)
+    if task:
+        return task
 
     return Note(clean, indent)
 
@@ -211,10 +197,28 @@ class Note(Item):
 
 class Task(Item):
     """An entry with a [ ] marker and potential sub-items."""
+    REGEX = re.compile(r'^\[([xeB\->\s]?)\]\s*(.*)')
+
     def __init__(self, content, indent=0, state=' '):
         super().__init__(content, indent)
         self.state = state  # ' ', 'x', '-', '>', 'B', 'e'
         self.children = []  # List of Item objects (Notes or Tasks)
+
+    @classmethod
+    def from_line(cls, line, indent=0):
+        clean = line.strip()
+        match = cls.REGEX.match(clean)
+        if match:
+            state_char = match.group(1)
+            state = state_char if state_char and not state_char.isspace() else ' '
+            content = match.group(2)
+
+            m_time = parse_meeting_time(content)
+            if m_time or state == 'B':
+                start, end = m_time if m_time else (None, None)
+                return Meeting(content, indent, state, start, end)
+            return cls(content, indent, state)
+        return None
 
     @property
     def is_complete(self):
@@ -249,10 +253,24 @@ class Meeting(Task):
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""
+    REGEX = re.compile(r'^------- (.*?) ([0-9/:\sAPM]+) -------$')
+
     def __init__(self, label, timestamp, indent=0):
         super().__init__(label, indent)
         self.label = label
         self.timestamp = timestamp
+
+    @classmethod
+    def from_line(cls, line, indent=0):
+        clean = line.strip()
+        match = cls.REGEX.match(clean)
+        if match:
+            return cls(match.group(1).strip(), match.group(2).strip(), indent)
+
+        if clean.startswith('-------') and clean.endswith('-------'):
+            label = clean.strip('-').strip()
+            return cls(label, "", indent)
+        return None
 
     def to_ledger(self):
         return f"{' ' * self.indent}------- {self.label} {self.timestamp} -------"

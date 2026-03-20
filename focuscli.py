@@ -141,9 +141,6 @@ def _parse_time_with_ampm(time_str, ampm, reference_date):
 
     return reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
 
-def is_task(item):
-    return re.match(r'^\[([xeB\->\s]?)\]\s', item)
-
 def strip_meeting_time(text):
     """Removes supported meeting time patterns from task text."""
     patterns = [
@@ -186,6 +183,10 @@ class FocusCLI:
         self.last_recorded_focus = None
         self.break_meeting_interrupted = False
 
+    @staticmethod
+    def is_task(item):
+        return re.match(r'^\[([xeB\->\s]?)\]\s', item)
+
     def get_daily_summary(self):
         """Returns a dictionary of counts for top-level tasks and subtasks."""
         counts = {
@@ -217,7 +218,7 @@ class FocusCLI:
             while len(stack) < level:
                 stack.append("") # Fill gaps
 
-            marker_match = is_task(clean)
+            marker_match = self.is_task(clean)
             if marker_match:
                 state = marker_match.group(1).strip()
                 if not state: state = 'pending'
@@ -352,9 +353,6 @@ class FocusCLI:
             # Update in-memory stack
             self.triage_stack.extend(all_rescued_tasks)
 
-    def is_task(self, item):
-       return re.match(r'^\[([xeB\->\s]?)\]\s', item)
-
     def _parse_file(self, filepath):
         """Parses a ledger file and returns a list of active tasks and notes."""
         if not os.path.exists(filepath):
@@ -385,7 +383,7 @@ class FocusCLI:
 
             if not line.startswith('  '):
                 clean = line.strip()
-                marker_match = is_task(clean)
+                marker_match = self.is_task(clean)
                 if marker_match:
                     state = marker_match.group(1).strip()
                     content = clean[marker_match.end():].strip()
@@ -417,13 +415,13 @@ class FocusCLI:
                     notes_list = active_entries[last_entry_content]['notes']
 
                     # Subtask/Note resolution logic
-                    sub_marker_match = is_task(note)
+                    sub_marker_match = self.is_task(note)
                     if sub_marker_match:
                         sub_content = note[sub_marker_match.end():].strip()
                         # Remove any existing instance of this subtask content
                         new_notes = []
                         for n in notes_list:
-                            m = is_task(n)
+                            m = self.is_task(n)
                             if m and n[m.end():].strip() == sub_content:
                                 continue
                             new_notes.append(n)
@@ -942,7 +940,7 @@ class FocusCLI:
                 if line.startswith('  '):
                     continue
 
-                marker_match = is_task(line.strip())
+                marker_match = self.is_task(line.strip())
                 if marker_match:
                     total += 1
                     state = marker_match.group(1).strip()
@@ -1588,12 +1586,12 @@ class FocusCLI:
         if root_id != self.last_recorded_focus:
             if not focus_path:
                 item_to_record = copy.deepcopy(focus_item)
-                item_to_record['notes'] = [n for n in item_to_record['notes'] if not is_task(n)]
+                item_to_record['notes'] = [n for n in item_to_record['notes'] if not self.is_task(n)]
                 self.commit_to_ledger("Task Started", [item_to_record])
             else:
                 # Build full path from top for ledger context
                 item_to_record = copy.deepcopy(focus_item)
-                item_to_record['notes'] = [n for n in item_to_record['notes'] if not is_task(n)]
+                item_to_record['notes'] = [n for n in item_to_record['notes'] if not self.is_task(n)]
 
                 hierarchical_context = self._get_path_pruned_item(top_task, focus_path, item_to_record)
                 # Ensure root of this context is marked pending

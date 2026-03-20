@@ -228,7 +228,7 @@ class Note(Item):
 
 class Task(Item):
     """An entry with a [ ] marker and potential sub-items."""
-    REGEX = re.compile(r'^\[([xeB\->\s]?)\]\s*(.*)')
+    REGEX = re.compile(r'^\[([xe\->\s]?)\]\s*(.*)')
 
     def __init__(self, content, indent=0, state=' '):
         super().__init__(content, indent)

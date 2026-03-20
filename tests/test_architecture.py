@@ -90,9 +90,6 @@ class TestArchitecture(unittest.TestCase):
         self.assertIsInstance(m1, Meeting)
         self.assertEqual(m1.content, "Meeting 2-3 PM")
 
-        m2 = Meeting.from_line("[B] Lunch 12 PM")
-        self.assertIsInstance(m2, Meeting)
-
         # Regular tasks
         t1 = Meeting.from_line("[] Regular Task")
         self.assertIsNone(t1)

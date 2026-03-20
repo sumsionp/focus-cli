@@ -168,6 +168,10 @@ def parse_single_line(line):
     if header:
         return header
 
+    meeting = Meeting.from_line(clean, indent)
+    if meeting:
+        return meeting
+
     task = Task.from_line(clean, indent)
     if task:
         return task
@@ -212,11 +216,6 @@ class Task(Item):
             state_char = match.group(1)
             state = state_char if state_char and not state_char.isspace() else ' '
             content = match.group(2)
-
-            m_time = parse_meeting_time(content)
-            if m_time or state == 'B':
-                start, end = m_time if m_time else (None, None)
-                return Meeting(content, indent, state, start, end)
             return cls(content, indent, state)
         return None
 
@@ -239,6 +238,21 @@ class Meeting(Task):
         super().__init__(content, indent, state)
         self.start_time = start_time
         self.end_time = end_time
+
+    @classmethod
+    def from_line(cls, line, indent=0):
+        clean = line.strip()
+        match = cls.REGEX.match(clean)
+        if match:
+            state_char = match.group(1)
+            state = state_char if state_char and not state_char.isspace() else ' '
+            content = match.group(2)
+
+            m_time = parse_meeting_time(content)
+            if m_time or state == 'B':
+                start, end = m_time if m_time else (None, None)
+                return cls(content, indent, state, start, end)
+        return None
 
     def is_active(self, now=None):
         if now is None:

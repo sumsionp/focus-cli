@@ -20,7 +20,7 @@ class TestCommandSwap(unittest.TestCase):
 
     def test_triage_mode_f_enters_focus(self):
         self.cli.mode = "TRIAGE"
-        self.cli.triage_stack = [{'line': '[] Task 1', 'notes': []}]
+        self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
         self.cli.handle_command('f')
         self.assertEqual(self.cli.mode, "FOCUS")
 
@@ -34,7 +34,7 @@ class TestCommandSwap(unittest.TestCase):
 
     def test_focus_mode_w_enters_free_write(self):
         self.cli.mode = "FOCUS"
-        self.cli.triage_stack = [{'line': '[] Task 1', 'notes': []}]
+        self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
         result = self.cli.handle_command('w')
         self.assertEqual(result, "REDRAW")
         # In actual code, enter_free_write is called which sets mode to TRIAGE
@@ -42,7 +42,7 @@ class TestCommandSwap(unittest.TestCase):
 
     def test_focus_mode_f_is_unassigned(self):
         self.cli.mode = "FOCUS"
-        self.cli.triage_stack = [{'line': '[] Task 1', 'notes': []}]
+        self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
         self.cli.last_msg = "test"
         self.cli.handle_command('f')
         # f should not change mode or do anything specific in FOCUS mode anymore
@@ -67,7 +67,7 @@ class TestCommandSwap(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
 
-        self.cli.triage_stack = [{'line': '[] Task 1', 'notes': []}]
+        self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
         f = io.StringIO()
         with redirect_stdout(f):
             self.cli.render_triage()
@@ -78,7 +78,7 @@ class TestCommandSwap(unittest.TestCase):
         f = io.StringIO()
         with redirect_stdout(f):
             self.cli.mode = "FOCUS"
-            self.cli.triage_stack = [{'line': '[] Task 1', 'notes': []}]
+            self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
             self.cli.render_focus()
         output = f.getvalue()
         self.assertIn("[w] free write", output)

@@ -17,7 +17,7 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_new_task_with_subtasks(self):
         """Scenario 1: Grouping subtasks with a new parent task."""
         self.cli.mode = "FOCUS"
-        self.cli.triage_stack = [{'line': '[] Active Task', 'notes': []}]
+        self.cli.triage_stack = [self.cli._parse_single_line('[] Active Task')]
 
         lines = [
             "[] New Parent",
@@ -28,14 +28,17 @@ class TestHierarchicalAdd(unittest.TestCase):
         self.cli._handle_hierarchical_new_items('n', items)
 
         self.assertEqual(len(self.cli.triage_stack), 2)
-        self.assertEqual(self.cli.triage_stack[1]['line'], "[] New Parent")
-        self.assertEqual(self.cli.triage_stack[1]['notes'], ["[] Subtask 1", "Note 1"])
+        task = self.cli.triage_stack[1]
+        self.assertEqual(task.content, "New Parent")
+        self.assertEqual(len(task.children), 2)
+        self.assertEqual(task.children[0].content, "Subtask 1")
+        self.assertEqual(task.children[1].content, "Note 1")
 
     def test_focus_preservation_with_N(self):
         """Scenario 5: Mixed batch with 'N' should preserve focus on current task."""
         initial_stack = [
-            {'line': '[] Task 1', 'notes': []},
-            {'line': '[] Task 2', 'notes': []}
+            self.cli._parse_single_line('[] Task 1'),
+            self.cli._parse_single_line('[] Task 2')
         ]
         self.cli.mode = "FOCUS"
         self.cli.triage_stack = copy.deepcopy(initial_stack)
@@ -48,16 +51,17 @@ class TestHierarchicalAdd(unittest.TestCase):
         self.cli._handle_hierarchical_new_items('N', items)
 
         # Focus (index 0) should still be Task 1 (with its new subtask)
-        self.assertEqual(self.cli.triage_stack[0]['line'], "[] Task 1")
-        self.assertIn("[] Subtask for 1", self.cli.triage_stack[0]['notes'])
+        task1 = self.cli.triage_stack[0]
+        self.assertEqual(task1.content, "Task 1")
+        self.assertTrue(any(c.content == "Subtask for 1" for c in task1.children))
         # New task should be at index 1
-        self.assertEqual(self.cli.triage_stack[1]['line'], "[] New Task")
+        self.assertEqual(self.cli.triage_stack[1].content, "New Task")
 
     def test_triage_leading_subtasks(self):
         """Scenario 8/9: Leading subtasks in Triage Mode target index 0."""
         initial_stack = [
-            {'line': '[] Task 1', 'notes': []},
-            {'line': '[] Task 2', 'notes': []}
+            self.cli._parse_single_line('[] Task 1'),
+            self.cli._parse_single_line('[] Task 2')
         ]
         self.cli.mode = "TRIAGE"
         self.cli.triage_stack = copy.deepcopy(initial_stack)
@@ -70,14 +74,20 @@ class TestHierarchicalAdd(unittest.TestCase):
         self.cli._handle_hierarchical_new_items('n', items)
 
         # Sub 1 should go to Task 1
-        self.assertIn("[] Sub 1", self.cli.triage_stack[0]['notes'])
+        task1 = self.cli.triage_stack[0]
+        self.assertTrue(any(c.content == "Sub 1" for c in task1.children))
         # New Top Task should be appended (for 'n')
-        self.assertEqual(self.cli.triage_stack[2]['line'], "[] New Top Task")
+        self.assertEqual(self.cli.triage_stack[2].content, "New Top Task")
 
     def test_prepend_notes_order_preservation(self):
         """Ensure prepended hierarchical items maintain original order."""
         self.cli.mode = "FOCUS"
-        self.cli.triage_stack = [{'line': '[] Active Task', 'notes': ['[] Existing Sub']}]
+        task = self.cli._parse_single_line('[] Active Task')
+        sub = self.cli._parse_single_line('[] Existing Sub')
+        sub.indent = 2
+        sub.parent = task
+        task.children.append(sub)
+        self.cli.triage_stack = [task]
 
         lines = [
             "  [] New Sub 1",
@@ -88,9 +98,10 @@ class TestHierarchicalAdd(unittest.TestCase):
         self.cli._handle_hierarchical_new_items('N', items)
 
         # Expected order: New Sub 1, New Sub 2, Existing Sub
-        self.assertEqual(self.cli.triage_stack[0]['notes'][0], "[] New Sub 1")
-        self.assertEqual(self.cli.triage_stack[0]['notes'][1], "[] New Sub 2")
-        self.assertEqual(self.cli.triage_stack[0]['notes'][2], "[] Existing Sub")
+        task = self.cli.triage_stack[0]
+        self.assertEqual(task.children[0].content, "New Sub 1")
+        self.assertEqual(task.children[1].content, "New Sub 2")
+        self.assertEqual(task.children[2].content, "Existing Sub")
 
 if __name__ == '__main__':
     unittest.main()

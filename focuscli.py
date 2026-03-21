@@ -228,7 +228,7 @@ class Note(Item):
 
 class Task(Item):
     """An entry with a [ ] marker and potential sub-items."""
-    REGEX = re.compile(r'^\[([xe\->\s]?)\]\s*(.*)')
+    REGEX = re.compile(r'^\[([xeB\->\s]?)\]\s*(.*)')
 
     def __init__(self, content, indent=0, state=' '):
         super().__init__(content, indent)
@@ -312,6 +312,10 @@ class Meeting(Task):
         if not self.start_time or not self.end_time:
             return False
         return self.start_time <= now < self.end_time
+
+class Break(Meeting):
+    """A meeting designed to act like a break, both scheduled and immediate"""
+    pass
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""

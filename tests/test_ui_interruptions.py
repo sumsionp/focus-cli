@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Mock FILENAME before importing FocusCLI
 os.environ['FOCUS_FILENAME'] = 'test-plan.txt'
 
-from focuscli import FocusCLI, parse_meeting_time
+from focuscli import FocusCLI
 
 class TestMeetingInterruption(unittest.TestCase):
     def setUp(self):

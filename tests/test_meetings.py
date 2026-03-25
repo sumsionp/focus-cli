@@ -8,7 +8,7 @@ import os
 # Ensure the root directory is in sys.path so we can import focuscli
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import FocusCLI
+from focuscli import FocusCLI, Meeting
 
 class TestMeetingInterruption(unittest.TestCase):
     def setUp(self):
@@ -96,6 +96,16 @@ class TestMeetingInterruption(unittest.TestCase):
         # task_start_time should have advanced by 300 seconds
         expected_task_start = (now - 300 - 600) + 300
         self.assertAlmostEqual(self.cli.task_start_time, expected_task_start)
+
+    def test_meeting_interface(self):
+        pass
+
+    def test_presense_of_start_date_end_date_duration(self):
+        """Test whether at least 2 of start_date, end_date, and duration are present"""
+        content = "[] Test Meeting with no date string"
+        indent = 0
+        state = ' '
+        self.assertIsNone(Meeting.from_attributes(content, indent, state, None, None, None))
 
 if __name__ == '__main__':
     unittest.main()

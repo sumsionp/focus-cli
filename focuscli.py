@@ -25,19 +25,6 @@ CHIME_COMMAND = None # Set to a command string like "play /path/to/sound.wav" to
 MEETING_COLOR = "\033[1;32m" # Green
 OVERLAP_COLOR = "\033[1;31m" # Red
 
-BREAK_QUOTES = [
-    "The time to relax is when you don't have time for it. – Sydney J. Harris",
-    "Taking a break can lead to breakthroughs. – Unknown",
-    "Rest is not idleness, and to lie sometimes on the grass under trees... is by no means a waste of time. – John Lubbock",
-    "Sometimes the most productive thing you can do is relax. – Mark Black",
-    "Almost everything will work again if you unplug it for a few minutes, including you. – Anne Lamott",
-    "A break from everything is much needed once in a while. – Unknown",
-    "Reflection is one of the most underused yet powerful tools for success. – Richard Carlson",
-    "Disconnect to reconnect. – Unknown",
-    "Your mind will answer most questions if you learn to relax and wait for the answer. – William S. Burroughs",
-    "Pause. Breathe. Rest. Start again. – Unknown"
-]
-
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -85,61 +72,6 @@ def parse_defer_date(date_str):
 
 def get_target_file(date):
     return date.strftime(f'{DATE_FORMAT}-plan.txt')
-
-def parse_meeting_time(text):
-    now = datetime.now()
-    text = text.upper()
-
-    # 1. Check for 2 PM 2h 15m format
-    m1 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)(?:\s*(\d+)H)?(?:\s*(\d+)M)?', text)
-    if m1 and (m1.group(3) or m1.group(4)):
-        start_time_str = m1.group(1)
-        ampm = m1.group(2)
-        hours = int(m1.group(3)) if m1.group(3) else 0
-        minutes = int(m1.group(4)) if m1.group(4) else 0
-
-        start_dt = _parse_time_with_ampm(start_time_str, ampm, now)
-        end_dt = start_dt + timedelta(hours=hours, minutes=minutes)
-        return start_dt, end_dt
-
-    # 2. Check for 11:00 AM-1:00 PM format
-    m2 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(AM|PM)', text)
-    if m2:
-        start_dt = _parse_time_with_ampm(m2.group(1), m2.group(2), now)
-        end_dt = _parse_time_with_ampm(m2.group(3), m2.group(4), now)
-        return start_dt, end_dt
-
-    # 3. Check for 2:00-3:00 PM or 2-3 PM format
-    m3 = re.search(r'(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(AM|PM)', text)
-    if m3:
-        end_time_str = m3.group(2)
-        ampm = m3.group(3)
-        end_dt = _parse_time_with_ampm(end_time_str, ampm, now)
-
-        start_time_str = m3.group(1)
-        start_dt = _parse_time_with_ampm(start_time_str, ampm, now)
-
-        if start_dt > end_dt:
-            alt_ampm = 'AM' if ampm == 'PM' else 'PM'
-            start_dt = _parse_time_with_ampm(start_time_str, alt_ampm, now)
-
-        return start_dt, end_dt
-
-    return None
-
-def _parse_time_with_ampm(time_str, ampm, reference_date):
-    if ':' in time_str:
-        h, m = map(int, time_str.split(':'))
-    else:
-        h = int(time_str)
-        m = 0
-
-    if ampm == 'PM' and h < 12:
-        h += 12
-    elif ampm == 'AM' and h == 12:
-        h = 0
-
-    return reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
 
 def strip_meeting_time(text):
     """Removes supported meeting time patterns from task text."""
@@ -282,10 +214,24 @@ class Task(Item):
 
 class Meeting(Task):
     """A task that specifically maps to a time window."""
-    def __init__(self, content, indent=0, state=' ', start_time=None, end_time=None):
+    def __init__(self, content, indent=0, state=' ', start_time=None, end_time=None, duration=None):
         super().__init__(content, indent, state)
         self.start_time = start_time
         self.end_time = end_time
+        self.duration = duration
+
+    @classmethod
+    def from_attributes(cls, content, indent, state, start=None, end=None, duration=None):
+        if start and end:
+            duration = (end - start) // timedelta(minutes=1)
+        elif start and duration:
+            end = start + timedelta(minutes=duration)
+        elif end and duration:
+            start = end - timedelta(minutes=duration)
+        else:
+            return None
+
+        return cls(content, indent, state, start, end, duration)
 
     @classmethod
     def from_line(cls, line, indent=0):
@@ -296,26 +242,93 @@ class Meeting(Task):
             state = state_char if state_char and not state_char.isspace() else ' '
             content = match.group(2)
 
-            m_time = parse_meeting_time(content)
+            m_time = cls.parse_meeting_time(content)
             if m_time or state == 'B':
-                start, end = m_time if m_time else (None, None)
-                return cls(content, indent, state, start, end)
+                start, end, duration = m_time if m_time else (None, None, None)
+                return cls(content, indent, state, start, end, duration)
         return None
+
+    @classmethod
+    def parse_meeting_time(cls, text):
+        now = datetime.now()
+        text = text.upper()
+
+        # 1. Check for 2 PM 2h 15m format
+        m1 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)(?:\s*(\d+)H)?(?:\s*(\d+)M)?', text)
+        if m1 and (m1.group(3) or m1.group(4)):
+            start_time_str = m1.group(1)
+            ampm = m1.group(2)
+            hours = int(m1.group(3)) if m1.group(3) else 0
+            minutes = int(m1.group(4)) if m1.group(4) else 0
+
+            start_dt = cls._parse_time_with_ampm(start_time_str, ampm, now)
+            end_dt = start_dt + timedelta(hours=hours, minutes=minutes)
+            return start_dt, end_dt, (end_dt - start_dt) // timedelta(minutes=1)
+
+        # 2. Check for 11:00 AM-1:00 PM format
+        m2 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(AM|PM)', text)
+        if m2:
+            start_dt = cls._parse_time_with_ampm(m2.group(1), m2.group(2), now)
+            end_dt = cls._parse_time_with_ampm(m2.group(3), m2.group(4), now)
+            return start_dt, end_dt, (end_dt - start_dt) // timedelta(minutes=1)
+
+        # 3. Check for 2:00-3:00 PM or 2-3 PM format
+        m3 = re.search(r'(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(AM|PM)', text)
+        if m3:
+            end_time_str = m3.group(2)
+            ampm = m3.group(3)
+            end_dt = cls._parse_time_with_ampm(end_time_str, ampm, now)
+
+            start_time_str = m3.group(1)
+            start_dt = cls._parse_time_with_ampm(start_time_str, ampm, now)
+
+            if start_dt > end_dt:
+                alt_ampm = 'AM' if ampm == 'PM' else 'PM'
+                start_dt = cls._parse_time_with_ampm(start_time_str, alt_ampm, now)
+
+            return start_dt, end_dt, (end_dt - start_dt) // timedelta(minutes=1)
+
+        return None
+
+    @classmethod
+    def _parse_time_with_ampm(cls, time_str, ampm, reference_date):
+        if ':' in time_str:
+            h, m = map(int, time_str.split(':'))
+        else:
+            h = int(time_str)
+            m = 0
+
+        if ampm == 'PM' and h < 12:
+            h += 12
+        elif ampm == 'AM' and h == 12:
+            h = 0
+
+        return reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
 
     def is_active(self, now=None):
         if now is None:
             now = datetime.now()
-        if not self.start_time or not self.end_time:
-            m_time = parse_meeting_time(self.content)
-            if m_time:
-                self.start_time, self.end_time = m_time
-        if not self.start_time or not self.end_time:
-            return False
         return self.start_time <= now < self.end_time
 
 class Break(Meeting):
     """A meeting designed to act like a break, both scheduled and immediate"""
     REGEX = re.compile(r'^\[([B]?)\]\s*(.*)')
+    BREAK_QUOTES = [
+    "The time to relax is when you don't have time for it. – Sydney J. Harris",
+    "Taking a break can lead to breakthroughs. – Unknown",
+    "Rest is not idleness, and to lie sometimes on the grass under trees... is by no means a waste of time. – John Lubbock",
+    "Sometimes the most productive thing you can do is relax. – Mark Black",
+    "Almost everything will work again if you unplug it for a few minutes, including you. – Anne Lamott",
+    "A break from everything is much needed once in a while. – Unknown",
+    "Reflection is one of the most underused yet powerful tools for success. – Richard Carlson",
+    "Disconnect to reconnect. – Unknown",
+    "Your mind will answer most questions if you learn to relax and wait for the answer. – William S. Burroughs",
+    "Pause. Breathe. Rest. Start again. – Unknown"
+    ]
+
+    @classmethod
+    def random_quote(cls):
+        return random.choice(cls.BREAK_QUOTES)
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""
@@ -1066,17 +1079,6 @@ class FocusCLI:
                             self.play_chime()
                         self.last_chime_timestamp = now
 
-    def is_meeting_active(self):
-        if not self.triage_stack: return False
-        item = self.triage_stack[0]
-        if isinstance(item, Meeting):
-            if not item.start_time or not item.end_time:
-                m_time = parse_meeting_time(item.content)
-                if m_time:
-                    item.start_time, item.end_time = m_time
-            return item.is_active()
-        return False
-
     def check_meetings(self):
         if self.mode not in ["FOCUS", "BREAK"]: return
         if not self.triage_stack: return
@@ -1111,6 +1113,29 @@ class FocusCLI:
 
                     if i == 0:
                         found_active_meeting = True
+
+    def enter_break_mode(self, parts):
+        if self.mode == "BREAK":
+            self.last_msg = "Break time overload! Doing nothing."
+            self.break_quote = Break.random_quote()
+            return
+        duration = 5
+        if len(parts) > 1:
+            try: duration = int(parts[1])
+            except ValueError:
+                self.last_msg = f"Invalid break duration: {parts[1]}"
+                return
+        if duration <= 0:
+            self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
+            return
+        self.mode = "BREAK"
+        self.break_meeting_interrupted = False
+        self.break_duration = duration
+        self.break_start_time = time.time()
+        self.break_quote = Break.random_quote()
+        self.last_chime_timestamp = 0
+        self.commit_to_ledger(f"Break for {duration} at", [])
+        return
 
     def render_break(self):
         elapsed_break = time.time() - self.break_start_time
@@ -1497,7 +1522,8 @@ class FocusCLI:
                 self.initial_stack = copy.deepcopy(self.triage_stack); return
             if self.mode == "BREAK":
                 if base_cmd == 'f': self._transition_from_break_to_focus(); return
-                elif base_cmd == 'b': self.last_msg = "Break time overload! Doing nothing."; self.break_quote = random.choice(BREAK_QUOTES); return
+                elif base_cmd == 'b':
+                    self.enter_break_mode(parts)
                 elif base_cmd in ['n', 'N']: pass
                 elif base_cmd in ['t', 'q']: pass
                 else: self.last_msg = "Command disabled during break."; return
@@ -1540,14 +1566,7 @@ class FocusCLI:
                         self.triage_stack[idx] = self._edit_item_obj(self.triage_stack[idx])
                         self.initial_stack = copy.deepcopy(self.triage_stack)
                 elif base_cmd == 'b':
-                    duration = 5
-                    if len(parts) > 1:
-                        try: duration = int(parts[1])
-                        except ValueError: self.last_msg = f"Invalid break duration: {parts[1]}"; return
-                    if duration <= 0: self.last_msg = "Seriously? Take a real break! 0 minutes is too short."; return
-                    self.mode = "BREAK"; self.break_meeting_interrupted = False; self.break_duration = duration
-                    self.break_start_time = time.time(); self.break_quote = random.choice(BREAK_QUOTES)
-                    self.last_chime_timestamp = 0; self.commit_to_ledger(f"Break for {duration} at", []); return
+                    self.enter_break_mode(parts)
                 elif base_cmd in ['>', '>>']:
                     if self._handle_defer_command_obj(base_cmd, parts): return
             elif self.mode in ["FOCUS", "BREAK"]:
@@ -1557,14 +1576,7 @@ class FocusCLI:
                 top_item = self.triage_stack[0]; focus_item, parent_item, focus_path = self._get_recursive_focus(top_item)
                 is_note = isinstance(focus_item, Note)
                 if base_cmd == 'b' and self.mode == "FOCUS":
-                    duration = 5
-                    if len(parts) > 1:
-                        try: duration = int(parts[1])
-                        except ValueError: self.last_msg = f"Invalid break duration: {parts[1]}"; return
-                    if duration <= 0: self.last_msg = "Seriously? Take a real break! 0 minutes is too short."; return
-                    self.mode = "BREAK"; self.break_meeting_interrupted = False; self.break_duration = duration
-                    self.break_start_time = time.time(); self.break_quote = random.choice(BREAK_QUOTES)
-                    self.last_chime_timestamp = 0; self.commit_to_ledger(f"Break for {duration} at", []); return
+                    self.enter_break_mode(parts)
                 if base_cmd == 'e':
                     new_item = self._edit_item_obj(focus_item)
                     if new_item != focus_item:

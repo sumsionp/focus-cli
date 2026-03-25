@@ -69,6 +69,23 @@ class TestArchitecture(unittest.TestCase):
         self.assertEqual(b5.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b5.end_time.strftime('%I:%M %p'), '04:00 AM')
 
+    def test_to_ledger(self):
+        """to_ledger should return a string suitable to write this break to the ledger"""
+        break_line = "[B] Scheduled Break 11:15-12:30 PM"
+
+        b1 = Break.from_line(break_line)
+
+        self.assertEqual(b1.to_ledger(), break_line)
+
+        content = "Be Inspired!"
+        start = dt.datetime.combine(dt.date.today(), dt.time(3,55))
+        end = dt.datetime.combine(dt.date.today(), dt.time(4,00))
+        duration = 5
+
+        b2 = Break.from_attributes(content, 0, ' ', start, end, duration)
+
+        self.assertEqual(b2.to_ledger(), f"[B] {content} 03:55-04:00 AM")
+
     def test_break_detection(self):
         """Break.from_line should identify break pattern"""
 

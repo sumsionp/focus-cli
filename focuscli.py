@@ -310,6 +310,9 @@ class Meeting(Task):
             now = datetime.now()
         return self.start_time <= now < self.end_time
 
+    def to_ledger(self):
+        return super().to_ledger()
+
 class Break(Meeting):
     """A meeting designed to act like a break, both scheduled and immediate"""
     REGEX = re.compile(r'^\[([B]?)\]\s*(.*)')

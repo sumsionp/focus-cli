@@ -100,6 +100,10 @@ def parse_single_line(line):
     if header:
         return header
 
+    break_item = Break.from_line(clean, indent)
+    if break_item:
+        return break_item
+
     meeting = Meeting.from_line(clean, indent)
     if meeting:
         return meeting
@@ -221,17 +225,17 @@ class Meeting(Task):
         self.duration = duration
 
     @classmethod
-    def from_attributes(cls, content, indent, state, start=None, end=None, duration=None):
-        if start and end:
-            duration = (end - start) // timedelta(minutes=1)
-        elif start and duration:
-            end = start + timedelta(minutes=duration)
-        elif end and duration:
-            start = end - timedelta(minutes=duration)
+    def from_attributes(cls, content, indent, state, start_time=None, end_time=None, duration=None):
+        if start_time and end_time:
+            duration = (end_time - start_time) // timedelta(minutes=1)
+        elif start_time and duration:
+            end_time = start_time + timedelta(minutes=duration)
+        elif end_time and duration:
+            start_time = end_time - timedelta(minutes=duration)
         else:
             return None
 
-        return cls(content, indent, state, start, end, duration)
+        return cls(content, indent, state, start_time, end_time, duration)
 
     @classmethod
     def from_line(cls, line, indent=0):
@@ -1059,8 +1063,15 @@ class FocusCLI:
     def check_chime(self):
         now = time.time()
         if self.mode == "BREAK":
-            elapsed_break = now - self.break_start_time
-            remaining = self.break_duration * 60 - elapsed_break
+            remaining = 0
+            if self.triage_stack and isinstance(self.triage_stack[0], Break):
+                break_item = self.triage_stack[0]
+                if break_item.end_time:
+                    remaining = int((break_item.end_time - datetime.now()).total_seconds())
+            else:
+                elapsed_break = now - self.break_start_time
+                remaining = self.break_duration * 60 - elapsed_break
+
             if remaining <= 0 or self.break_meeting_interrupted:
                 if now - self.last_chime_timestamp >= 60:
                     self.play_chime()
@@ -1103,7 +1114,7 @@ class FocusCLI:
                 if self.mode == "FOCUS":
                     if i > 0 and not found_active_meeting:
                         current_item = self.triage_stack[0]
-                        is_current_active_meeting = isinstance(current_item, Meeting) and current_item.is_active()
+                        is_current_active_meeting = isinstance(current_item, (Meeting, Break)) and current_item.is_active()
 
                         if not is_current_active_meeting:
                             self.triage_stack.insert(0, self.triage_stack.pop(i))
@@ -1114,10 +1125,16 @@ class FocusCLI:
                     if i == 0:
                         found_active_meeting = True
 
+                        if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
+                            self.mode = "BREAK"
+                            self.break_start_time = time.time()
+                            self.break_duration = self.triage_stack[0].duration
+                            self.break_quote = self.triage_stack[0].content
+                            self.last_msg = f"Break Meeting Started: {self.break_quote}"
+
     def enter_break_mode(self, parts):
         if self.mode == "BREAK":
             self.last_msg = "Break time overload! Doing nothing."
-            self.break_quote = Break.random_quote()
             return
         duration = 5
         if len(parts) > 1:
@@ -1128,18 +1145,34 @@ class FocusCLI:
         if duration <= 0:
             self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
             return
+
+        break_item = Break.from_attributes(
+            content=Break.random_quote(),
+            indent=0,
+            state='B',
+            start_time=datetime.now(),
+            duration=duration
+        )
+        self.triage_stack.insert(0, break_item)
+
         self.mode = "BREAK"
         self.break_meeting_interrupted = False
         self.break_duration = duration
         self.break_start_time = time.time()
-        self.break_quote = Break.random_quote()
+        self.break_quote = break_item.content
         self.last_chime_timestamp = 0
-        self.commit_to_ledger(f"Break for {duration} at", [])
+        self.commit_to_ledger(f"Break for {duration} at", [break_item])
         return
 
     def render_break(self):
-        elapsed_break = time.time() - self.break_start_time
-        remaining = int(self.break_duration * 60 - elapsed_break)
+        if self.triage_stack and isinstance(self.triage_stack[0], Break):
+            break_item = self.triage_stack[0]
+            remaining = int((break_item.end_time - datetime.now()).total_seconds()) if break_item.end_time else 0
+            self.break_quote = break_item.content
+        else:
+            elapsed_break = time.time() - self.break_start_time
+            remaining = int(self.break_duration * 60 - elapsed_break)
+
         sign = "-" if remaining < 0 else ""
         m, s = divmod(abs(remaining), 60)
         time_str = f"{sign}{m:02d}:{s:02d}"
@@ -1203,8 +1236,12 @@ class FocusCLI:
             sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m{task_timer_str} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
             sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
         elif self.mode == "BREAK":
-            elapsed_break = time.time() - self.break_start_time
-            remaining = int(self.break_duration * 60 - elapsed_break)
+            if self.triage_stack and isinstance(self.triage_stack[0], Break):
+                break_item = self.triage_stack[0]
+                remaining = int((break_item.end_time - datetime.now()).total_seconds()) if break_item.end_time else 0
+            else:
+                elapsed_break = time.time() - self.break_start_time
+                remaining = int(self.break_duration * 60 - elapsed_break)
             sign = "-" if remaining < 0 else ""
             m, s = divmod(abs(remaining), 60)
             color = "\033[1;34m"
@@ -1521,11 +1558,19 @@ class FocusCLI:
                     self.check_meetings()
                 self.initial_stack = copy.deepcopy(self.triage_stack); return
             if self.mode == "BREAK":
-                if base_cmd == 'f': self._transition_from_break_to_focus(); return
+                is_break_obj = self.triage_stack and isinstance(self.triage_stack[0], Break)
+                if base_cmd == 'f':
+                    if is_break_obj:
+                        break_item = self.triage_stack.pop(0)
+                        break_item.state = 'x'
+                        self.commit_to_ledger("Break Completed", [break_item])
+                    self._transition_from_break_to_focus(); return
                 elif base_cmd == 'b':
                     self.enter_break_mode(parts)
                 elif base_cmd in ['n', 'N']: pass
                 elif base_cmd in ['t', 'q']: pass
+                elif is_break_obj and base_cmd in ['x', '-', 'i', '>', '>>', 'e']:
+                    pass # Handled below
                 else: self.last_msg = "Command disabled during break."; return
             if self.mode == "TRIAGE":
                 if base_cmd == 'f':
@@ -1602,7 +1647,6 @@ class FocusCLI:
                     return
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:
-                    if self.mode == "BREAK": self.last_msg = "Command disabled during break."; return
                     idx = int(match_x.group(1))
                     if isinstance(focus_item, Task) and 0 <= idx < len(focus_item.children):
                         child = focus_item.children[idx]
@@ -1614,12 +1658,10 @@ class FocusCLI:
                                 self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
                     return
                 if is_note and base_cmd in ['x', '-', 'i']:
-                    if self.mode == "BREAK": self.last_msg = "Command disabled during break."; return
                     if not focus_path: self.triage_stack.pop(0)
                     else: pass
                     self.task_start_time = None; self.initial_stack = copy.deepcopy(self.triage_stack); return
                 if base_cmd in ['x', '-', '>', '>>', 'i']:
-                    if self.mode == "BREAK": self.last_msg = "Command disabled during break."; return
                     if base_cmd == '>>' or base_cmd == '>':
                         if self._handle_defer_command_obj(base_cmd, parts): return
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
@@ -1641,6 +1683,8 @@ class FocusCLI:
                     self.task_start_time = None; self.initial_stack = copy.deepcopy(self.triage_stack)
                     if not self.triage_stack and self.mode == "FOCUS":
                         self.commit_to_ledger("Focus Session Complete", []); self.mode = "EXIT"; return "REDRAW"
+                    if self.mode == "BREAK" and is_break_obj:
+                        self._transition_from_break_to_focus(); return "REDRAW"
         except Exception as e: self.last_msg = f"Error: {e}"
         return None
 

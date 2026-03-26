@@ -186,6 +186,10 @@ class Task(Item):
     def is_complete(self):
         return self.state == 'x'
 
+    @property
+    def is_pending(self):
+        return self.state in [' ', 'B']
+
     def clone_with_state(self, main_state, pending_sub_state):
         """Helper to create a copy of a task with updated markers for pending items."""
         new_item = copy.deepcopy(self)
@@ -473,7 +477,7 @@ class FocusCLI:
 
         for item in self.triage_stack:
             if isinstance(item, Meeting):
-                if item.start_time and item.end_time and item.start_time <= now < item.end_time:
+                if item.is_active(now=now):
                     active_meetings.append(item)
                 elif item.start_time:
                     inactive_meetings.append((item.start_time, item))
@@ -587,7 +591,7 @@ class FocusCLI:
             full_path = parent_path + (item.content,)
 
             if isinstance(item, Task):
-                if item.state == ' ':
+                if item.is_pending:
                     # Pending task. Preserve children if already known.
                     if full_path in active_items:
                         existing = active_items[full_path]
@@ -608,6 +612,9 @@ class FocusCLI:
                     current_path.append(item)
                 else:
                     # Resolution
+                    # Special case: If state is 'B', it's NOT a resolution, it's a pending break.
+                    # But we already handled it in the `if item.state in [' ', 'B']` block.
+                    # This `else` is for 'x', '-', '>', 'e'.
                     active_items.pop(full_path, None)
                     if not current_path:
                         if item.content in top_level_contents:
@@ -964,7 +971,7 @@ class FocusCLI:
             completed = sum(summary['top'].values())
             pending = 0
             for it in self.triage_stack:
-                if isinstance(it, Task) and it.state == ' ':
+                if isinstance(it, Task) and it.is_pending:
                     pending += 1
             total = completed + pending
         else:

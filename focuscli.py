@@ -211,7 +211,6 @@ class Task(Item):
             lines.append(child.to_ledger())
         return "\n".join(lines)
 
-
 class Meeting(Task):
     """A task that specifically maps to a time window."""
     def __init__(self, content, indent=0, state=' ', start_time=None, end_time=None, duration=None):
@@ -231,6 +230,8 @@ class Meeting(Task):
         else:
             return None
 
+        content = f"{content} {start.strftime('%I:%M')}-{end.strftime('%I:%M %p')}"
+
         return cls(content, indent, state, start, end, duration)
 
     @classmethod
@@ -243,7 +244,7 @@ class Meeting(Task):
             content = match.group(2)
 
             m_time = cls.parse_meeting_time(content)
-            if m_time or state == 'B':
+            if m_time:
                 start, end, duration = m_time if m_time else (None, None, None)
                 return cls(content, indent, state, start, end, duration)
         return None
@@ -310,9 +311,6 @@ class Meeting(Task):
             now = datetime.now()
         return self.start_time <= now < self.end_time
 
-    def to_ledger(self):
-        return super().to_ledger()
-
 class Break(Meeting):
     """A meeting designed to act like a break, both scheduled and immediate"""
     REGEX = re.compile(r'^\[([B]?)\]\s*(.*)')
@@ -332,6 +330,10 @@ class Break(Meeting):
     @classmethod
     def random_quote(cls):
         return random.choice(cls.BREAK_QUOTES)
+
+    @classmethod
+    def from_attributes(cls, content, start=None, end=None, duration=None):
+        return super().from_attributes(content, 0, 'B', start, end, duration)
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""

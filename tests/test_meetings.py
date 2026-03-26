@@ -82,19 +82,28 @@ class TestMeetingInterruption(unittest.TestCase):
 
     def test_transition_from_break_to_focus(self):
         """Test the transition logic from break back to Focus session."""
+        from focuscli import Break
+        now_dt = datetime.now()
+        start_dt = now_dt - timedelta(minutes=5)
+        break_item = Break.from_attributes("Test Break", 0, 'B', start_time=start_dt, duration=5)
+
         self.cli.mode = "BREAK"
-        self.cli.break_start_time = time.time() - 300 # 5 mins ago
-        self.cli.task_start_time = self.cli.break_start_time - 600 # 10 mins before break
+        # task_start_time was 10 mins before the break started
+        # which is now_dt - 15 mins
+        task_start_time_float = (start_dt - timedelta(minutes=10)).timestamp()
+        self.cli.task_start_time = task_start_time_float
         self.cli.break_meeting_interrupted = True
 
-        now = time.time()
-        with patch('time.time', return_value=now):
-            self.cli._transition_from_break_to_focus()
+        now_float = now_dt.timestamp()
+        with patch('time.time', return_value=now_float), \
+             patch('focuscli.datetime') as mock_datetime:
+            mock_datetime.now.return_value = now_dt
+            self.cli._transition_from_break_to_focus(break_item=break_item)
 
         self.assertEqual(self.cli.mode, "FOCUS")
         self.assertFalse(self.cli.break_meeting_interrupted)
-        # task_start_time should have advanced by 300 seconds
-        expected_task_start = (now - 300 - 600) + 300
+        # task_start_time should have advanced by the break duration (5 mins = 300s)
+        expected_task_start = task_start_time_float + 300
         self.assertAlmostEqual(self.cli.task_start_time, expected_task_start)
 
     def test_meeting_interface(self):

@@ -318,7 +318,21 @@ class Meeting(Task):
 
 class Break(Meeting):
     """A meeting designed to act like a break, both scheduled and immediate"""
-    REGEX = re.compile(r'^\[([B]?)\]\s*(.*)')
+    REGEX = re.compile(r'^\[(B)\]\s*(.*)')
+
+    @classmethod
+    def from_line(cls, line, indent=0):
+        clean = line.strip()
+        match = cls.REGEX.match(clean)
+        if match:
+            state = match.group(1)
+            content = match.group(2)
+
+            m_time = cls.parse_meeting_time(content)
+            start, end, duration = m_time if m_time else (None, None, None)
+            return cls(content, indent, state, start, end, duration)
+        return None
+
     BREAK_QUOTES = [
     "The time to relax is when you don't have time for it. – Sydney J. Harris",
     "Taking a break can lead to breakthroughs. – Unknown",
@@ -1093,6 +1107,15 @@ class FocusCLI:
         if not self.triage_stack: return
 
         now = datetime.now()
+        # Auto-detect break objects at the top of the stack and ensure BREAK mode
+        if self.mode in ["FOCUS", "BREAK"] and isinstance(self.triage_stack[0], Break):
+            break_item = self.triage_stack[0]
+            if not break_item.end_time:
+                break_item.start_time = datetime.now()
+                break_item.duration = 5
+                break_item.end_time = break_item.start_time + timedelta(minutes=5)
+            self.mode = "BREAK"
+
         found_active_meeting = False
         for i, item in enumerate(self.triage_stack):
             is_active_meeting = False
@@ -1103,7 +1126,7 @@ class FocusCLI:
                 state_str = item.state if item.state.strip() else ''
                 meeting_id = f"[{state_str}] {item.content}_{item.start_time}"
                 if meeting_id not in self.chimed_meetings:
-                    if self.mode == "BREAK":
+                    if self.mode == "BREAK" and not isinstance(item, Break):
                         self.break_meeting_interrupted = True
                     self.play_chime()
                     self.chimed_meetings.add(meeting_id)
@@ -1149,6 +1172,11 @@ class FocusCLI:
             duration=duration
         )
         self.triage_stack.insert(0, break_item)
+
+        # Add to chimed_meetings to prevent redundant chime for manual breaks
+        state_str = break_item.state if break_item.state.strip() else ''
+        meeting_id = f"[{state_str}] {break_item.content}_{break_item.start_time}"
+        self.chimed_meetings.add(meeting_id)
 
         self.mode = "BREAK"
         self.break_meeting_interrupted = False
@@ -1423,11 +1451,7 @@ class FocusCLI:
     def render_focus(self):
         if not self.triage_stack: return
         if isinstance(self.triage_stack[0], Break):
-            break_item = self.triage_stack[0]
-            if not break_item.end_time:
-                break_item.start_time = datetime.now()
-                break_item.duration = 5
-                break_item.end_time = break_item.start_time + timedelta(minutes=5)
+            # Lifecycle management for Break objects at the top of the stack is handled in check_meetings
             self.mode = "BREAK"
             self.last_chime_timestamp = 0
             return

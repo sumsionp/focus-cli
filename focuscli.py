@@ -312,6 +312,8 @@ class Meeting(Task):
     def is_active(self, now=None):
         if now is None:
             now = datetime.now()
+        if not self.start_time or not self.end_time:
+            return False
         return self.start_time <= now < self.end_time
 
 class Break(Meeting):
@@ -1420,6 +1422,15 @@ class FocusCLI:
 
     def render_focus(self):
         if not self.triage_stack: return
+        if isinstance(self.triage_stack[0], Break):
+            break_item = self.triage_stack[0]
+            if not break_item.end_time:
+                break_item.start_time = datetime.now()
+                break_item.duration = 5
+                break_item.end_time = break_item.start_time + timedelta(minutes=5)
+            self.mode = "BREAK"
+            self.last_chime_timestamp = 0
+            return
         now = time.time()
         if self.task_start_time is None: self.task_start_time = now
         if self.focus_start_time is None: self.focus_start_time = now

@@ -42,28 +42,28 @@ class TestArchitecture(unittest.TestCase):
         duration = 5
 
         # All attributes
-        b2 = Break.from_attributes(content, 0, " ", start, end, duration)
+        b2 = Break.from_attributes(content, 0, " ", start_time=start, end_time=end, duration=duration)
 
         self.assertEqual(b2.duration, 5)
         self.assertEqual(b2.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b2.end_time.strftime('%I:%M %p'), '04:00 AM')
 
         # Only start and end
-        b3 = Break.from_attributes(content, 0, " ", start, end, None)
+        b3 = Break.from_attributes(content, 0, " ", start_time=start, end_time=end, duration=None)
 
         self.assertEqual(b3.duration, 5)
         self.assertEqual(b3.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b3.end_time.strftime('%I:%M %p'), '04:00 AM')
  
         # Only start and duration
-        b4 = Break.from_attributes(content, 0, " ", start, None, duration)
+        b4 = Break.from_attributes(content, 0, " ", start_time=start, end_time=None, duration=duration)
 
         self.assertEqual(b4.duration, 5)
         self.assertEqual(b4.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b4.end_time.strftime('%I:%M %p'), '04:00 AM')
 
         # Only end and duration
-        b5 = Break.from_attributes(content, 0, " ", None, end, duration)
+        b5 = Break.from_attributes(content, 0, " ", start_time=None, end_time=end, duration=duration)
 
         self.assertEqual(b5.duration, 5)
         self.assertEqual(b5.start_time.strftime('%I:%M %p'), '03:55 AM')

@@ -906,6 +906,13 @@ class FocusCLI:
 
         if top_level_items:
             any_changed = True
+            if self.mode == "BREAK" and self.triage_stack and isinstance(self.triage_stack[0], Break):
+                if target_index == 0 or (target_index is None and base_cmd_orig == 'N' and not hier_items):
+                    old_break = self.triage_stack.pop(0)
+                    old_break.state = 'x'
+                    self.commit_to_ledger("Break Completed", [old_break])
+                    self._transition_from_break_to_focus(break_item=old_break)
+
             self.commit_to_ledger(mode_label, top_level_items)
             top_level_tasks = [it for it in top_level_items if isinstance(it, Task)]
 
@@ -1160,8 +1167,14 @@ class FocusCLI:
 
     def enter_break_mode(self, parts):
         if self.mode == "BREAK":
-            self.last_msg = "Break time overload! Doing nothing."
-            return
+            if self.triage_stack and isinstance(self.triage_stack[0], Break):
+                old_break = self.triage_stack.pop(0)
+                old_break.state = 'x'
+                self.commit_to_ledger("Break Completed", [old_break])
+                self._transition_from_break_to_focus(break_item=old_break)
+            else:
+                self.last_msg = "Break time overload! Doing nothing."
+                return
         duration = 5
         if len(parts) > 1:
             try: duration = int(parts[1])

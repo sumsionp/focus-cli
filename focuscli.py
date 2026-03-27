@@ -219,7 +219,6 @@ class Task(Item):
             lines.append(child.to_ledger())
         return "\n".join(lines)
 
-
 class Meeting(Task):
     """A task that specifically maps to a time window."""
     def __init__(self, content, indent=0, state=' ', start_time=None, end_time=None, duration=None):
@@ -238,6 +237,8 @@ class Meeting(Task):
             start_time = end_time - timedelta(minutes=duration)
         else:
             return None
+
+        content = f"{content} {start_time.strftime('%I:%M')}-{end_time.strftime('%I:%M %p')}"
 
         return cls(content, indent, state, start_time, end_time, duration)
 
@@ -357,6 +358,10 @@ class Break(Meeting):
     @property
     def is_pending(self):
         return self.state in ['B'] or super().is_pending
+      
+    @classmethod
+    def from_attributes(cls, content, start=None, end=None, duration=None):
+        return super().from_attributes(content, 0, 'B', start, end, duration)
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""

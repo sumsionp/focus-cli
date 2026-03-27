@@ -42,32 +42,58 @@ class TestArchitecture(unittest.TestCase):
         duration = 5
 
         # All attributes
-        b2 = Break.from_attributes(content, 0, " ", start_time=start, end_time=end, duration=duration)
+        b2 = Break.from_attributes(content, start_time=start, end_time=end, duration=duration)
 
         self.assertEqual(b2.duration, 5)
         self.assertEqual(b2.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b2.end_time.strftime('%I:%M %p'), '04:00 AM')
 
         # Only start and end
-        b3 = Break.from_attributes(content, 0, " ", start_time=start, end_time=end, duration=None)
+        b3 = Break.from_attributes(content, start_time=start, end_time=end, duration=None)
 
         self.assertEqual(b3.duration, 5)
         self.assertEqual(b3.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b3.end_time.strftime('%I:%M %p'), '04:00 AM')
  
         # Only start and duration
-        b4 = Break.from_attributes(content, 0, " ", start_time=start, end_time=None, duration=duration)
+        b4 = Break.from_attributes(content, start_time=start, end_time=None, duration=duration)
 
         self.assertEqual(b4.duration, 5)
         self.assertEqual(b4.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b4.end_time.strftime('%I:%M %p'), '04:00 AM')
 
         # Only end and duration
-        b5 = Break.from_attributes(content, 0, " ", start_time=None, end_time=end, duration=duration)
+        b5 = Break.from_attributes(content, start_time=None, end_time=end, duration=duration)
 
         self.assertEqual(b5.duration, 5)
         self.assertEqual(b5.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b5.end_time.strftime('%I:%M %p'), '04:00 AM')
+
+    def test_to_ledger(self):
+        """to_ledger should return a string suitable to write this break to the ledger"""
+        break_line = "[B] Scheduled Break 11:15-12:30 PM"
+
+        b1 = Break.from_line(break_line)
+
+        self.assertEqual(b1.to_ledger(), break_line)
+
+        content = "Be Inspired!"
+        start = dt.datetime.combine(dt.date.today(), dt.time(3,55))
+        end = dt.datetime.combine(dt.date.today(), dt.time(4,00))
+        duration = 5
+
+        b2 = Break.from_attributes(content, start, end, duration)
+
+        self.assertEqual(b2.to_ledger(), f"[B] {content} 03:55-04:00 AM")
+
+    def test_auto_adds_b_marker(self):
+        """Break.from_attributes should automatically add [B] marker"""
+        start = dt.datetime.combine(dt.date.today(), dt.time(3,55))
+        end = dt.datetime.combine(dt.date.today(), dt.time(4,00))
+
+        b1 = Break.from_attributes("Be Inspired!", start, end, None)
+
+        self.assertEqual(b1.to_ledger(), "[B] Be Inspired! 03:55-04:00 AM")
 
     def test_break_detection(self):
         """Break.from_line should identify break pattern"""

@@ -168,7 +168,7 @@ class Task(Item):
 
     def __init__(self, content, indent=0, state=' '):
         super().__init__(content, indent)
-        self.state = state  # ' ', 'x', '-', '>', 'B', 'e'
+        self.state = state  # ' ', 'x', '-', '>', 'e'
         self.children = []  # List of Item objects (Notes or Tasks)
 
     @classmethod
@@ -184,11 +184,11 @@ class Task(Item):
 
     @property
     def is_complete(self):
-        return self.state == 'x'
+        return self.state in ['x', '-', '>', 'e']
 
     @property
     def is_pending(self):
-        return self.state in [' ', 'B']
+        return self.state in [' ']
 
     def clone_with_state(self, main_state, pending_sub_state):
         """Helper to create a copy of a task with updated markers for pending items."""
@@ -251,7 +251,7 @@ class Meeting(Task):
             content = match.group(2)
 
             m_time = cls.parse_meeting_time(content)
-            if m_time or state == 'B':
+            if m_time:
                 start, end, duration = m_time if m_time else (None, None, None)
                 return cls(content, indent, state, start, end, duration)
         return None
@@ -353,6 +353,10 @@ class Break(Meeting):
     @classmethod
     def random_quote(cls):
         return random.choice(cls.BREAK_QUOTES)
+
+    @property
+    def is_pending(self):
+        return self.state in ['B'] or super().is_pending
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""
@@ -611,9 +615,6 @@ class FocusCLI:
                             item.parent = parent
                     current_path.append(item)
                 else:
-                    # Resolution
-                    # Special case: If state is 'B', it's NOT a resolution, it's a pending break.
-                    # But we already handled it in the `if item.state in [' ', 'B']` block.
                     # This `else` is for 'x', '-', '>', 'e'.
                     active_items.pop(full_path, None)
                     if not current_path:

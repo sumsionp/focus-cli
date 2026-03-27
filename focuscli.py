@@ -360,8 +360,8 @@ class Break(Meeting):
         return self.state in ['B'] or super().is_pending
       
     @classmethod
-    def from_attributes(cls, content, start=None, end=None, duration=None):
-        return super().from_attributes(content, 0, 'B', start, end, duration)
+    def from_attributes(cls, content, start_time=None, end_time=None, duration=None):
+        return super().from_attributes(content, 0, 'B', start_time, end_time, duration)
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""

@@ -34,7 +34,7 @@ class TestMeetingInterruption(unittest.TestCase):
         # Important: The meeting item MUST be before the break item for it to be detected as "interrupting"
         # Since we are in BREAK mode, if we were focused on the meeting, it would be at index 0.
         # But here we simulate a break started via 'b' which puts break_item at index 0.
-        break_item = Break.from_attributes("Coffee Break", 0, 'B', start_time=now, duration=5)
+        break_item = Break.from_attributes("Water Break", now, None, 5)
         self.cli.triage_stack = [break_item, meeting_item]
         self.cli.mode = "BREAK"
         self.cli.break_meeting_interrupted = False
@@ -70,7 +70,7 @@ class TestMeetingInterruption(unittest.TestCase):
         self.cli.chimed_meetings.add(meeting_id)
 
         # 2. Start a break
-        break_item = Break.from_attributes("Quick Break", 0, 'B', start_time=now, duration=5)
+        break_item = Break.from_attributes("Quick Break", now, None, 5)
         self.cli.triage_stack = [break_item, meeting_item]
         self.cli.mode = "BREAK"
         self.cli.break_meeting_interrupted = False
@@ -88,7 +88,7 @@ class TestMeetingInterruption(unittest.TestCase):
         """Test the transition logic from break back to Focus session."""
         now_dt = datetime.now()
         start_dt = now_dt - timedelta(minutes=5)
-        break_item = Break.from_attributes("Test Break", 0, 'B', start_time=start_dt, duration=5)
+        break_item = Break.from_attributes("Test Break", start_dt, None, 5)
 
         self.cli.mode = "BREAK"
         # task_start_time was 10 mins before the break started

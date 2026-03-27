@@ -114,10 +114,10 @@ class TestArchitecture(unittest.TestCase):
 
     def test_specialized_is_pending(self):
         """Test that is_pending recognizes [B] status"""
-        b1 = Break.from_attributes("A Break", 0, 'B', start_time=dt.datetime.now(), end_time=None, duration=5)
+        b1 = Break.from_attributes("A Break", dt.datetime.now(), None, 5)
         self.assertTrue(b1.is_pending)
 
-        b2 = Break.from_attributes("A Break", 0, ' ', start_time=dt.datetime.now(), end_time=None, duration=5)
+        b2 = Break.from_attributes("A Break", dt.datetime.now(), None, 5)
         self.assertTrue(b2.is_pending)
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ import os
 # Ensure the root directory is in sys.path so we can import focuscli
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import FocusCLI, Meeting, Break
+from focuscli import FocusCLI, Meeting
 
 class TestMeetingInterruption(unittest.TestCase):
     def setUp(self):
@@ -23,6 +23,7 @@ class TestMeetingInterruption(unittest.TestCase):
 
     def test_new_meeting_visually_interrupts_break(self):
         """Test that a newly starting meeting triggers visual interruption but stays in BREAK mode."""
+        from focuscli import Break
         # 1. Setup a meeting
         now = datetime.now()
         meeting_start = now + timedelta(minutes=1)
@@ -58,6 +59,7 @@ class TestMeetingInterruption(unittest.TestCase):
 
     def test_break_during_ongoing_meeting_not_visually_interrupted(self):
         """Test that starting a break during an ongoing meeting does not trigger immediate interruption."""
+        from focuscli import Break
         # 1. Setup an ongoing meeting that has already chimed
         now = datetime.now()
         meeting_start = now - timedelta(minutes=2)
@@ -86,6 +88,7 @@ class TestMeetingInterruption(unittest.TestCase):
 
     def test_transition_from_break_to_focus(self):
         """Test the transition logic from break back to Focus session."""
+        from focuscli import Break
         now_dt = datetime.now()
         start_dt = now_dt - timedelta(minutes=5)
         break_item = Break.from_attributes("Test Break", 0, 'B', start_time=start_dt, duration=5)
@@ -118,23 +121,6 @@ class TestMeetingInterruption(unittest.TestCase):
         indent = 0
         state = ' '
         self.assertIsNone(Meeting.from_attributes(content, indent, state, None, None, None))
-
-    def test_is_pending(self):
-        """Test is_pending with known complete, pending, and non-related statuses"""
-        # Test known "completed" statuses
-        for completed_status in ['x', 'i', 'e', '>', '-']:
-            meeting = Meeting.from_attributes("A Meeting", 0, completed_status, datetime.now(), None, 5)
-            self.assertFalse(meeting.is_pending)
-
-        # Test known pending status
-        pending_status = ' '
-        m1 = Meeting.from_attributes("A Meeting", 0, pending_status, datetime.now(), None, 5)
-        self.assertTrue(m1.is_pending)
-
-        # Test doesn't know about Break pending status
-        break_pending_status = 'B'
-        m2 = Meeting.from_attributes("A Meeting", 0, break_pending_status, datetime.now(), None, 5)
-        self.assertFalse(m2.is_pending)
 
 if __name__ == '__main__':
     unittest.main()

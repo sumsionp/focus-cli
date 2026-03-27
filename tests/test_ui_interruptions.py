@@ -22,18 +22,20 @@ class TestMeetingInterruption(unittest.TestCase):
         self.cli._run_with_vi = MagicMock()
 
     def test_new_meeting_visually_interrupts_break(self):
+        from focuscli import Break
         # 1. Setup a meeting
         now = datetime.now()
         meeting_start = now + timedelta(minutes=1)
         meeting_end = meeting_start + timedelta(minutes=5)
 
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 5m"
-        self.cli.triage_stack = [self.cli._parse_single_line(meeting_text)]
+        meeting_item = self.cli._parse_single_line(meeting_text)
 
         # 2. Start a break
+        break_item = Break.from_attributes("Quick Break", 0, 'B', start_time=now, duration=5)
+        self.cli.triage_stack = [break_item, meeting_item]
         self.cli.mode = "BREAK"
-        self.cli.break_start_time = time.time()
-        self.cli.break_duration = 5
+        self.cli.break_meeting_interrupted = False
 
         # 3. Fast forward time to when meeting starts
         future_now = meeting_start + timedelta(seconds=1)
@@ -53,22 +55,23 @@ class TestMeetingInterruption(unittest.TestCase):
         self.cli.play_chime.assert_called()
 
     def test_break_during_ongoing_meeting_not_visually_interrupted(self):
+        from focuscli import Break
         # 1. Setup an ongoing meeting that has already chimed
         now = datetime.now()
         meeting_start = now - timedelta(minutes=2)
         meeting_end = now + timedelta(minutes=5)
 
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 10m"
-        self.cli.triage_stack = [self.cli._parse_single_line(meeting_text)]
+        meeting_item = self.cli._parse_single_line(meeting_text)
 
         # Mark as already chimed
-        meeting_id = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 10m_{meeting_start.replace(second=0, microsecond=0)}"
+        meeting_id = f"[] {meeting_item.content}_{meeting_item.start_time}"
         self.cli.chimed_meetings.add(meeting_id)
 
         # 2. Start a break
+        break_item = Break.from_attributes("Quick Break", 0, 'B', start_time=now, duration=5)
+        self.cli.triage_stack = [break_item, meeting_item]
         self.cli.mode = "BREAK"
-        self.cli.break_start_time = time.time()
-        self.cli.break_duration = 5
         self.cli.break_meeting_interrupted = False
 
         # 3. Call check_meetings

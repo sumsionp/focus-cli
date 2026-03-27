@@ -42,28 +42,28 @@ class TestArchitecture(unittest.TestCase):
         duration = 5
 
         # All attributes
-        b2 = Break.from_attributes(content, start, end, duration)
+        b2 = Break.from_attributes(content, start_time=start, end_time=end, duration=duration)
 
         self.assertEqual(b2.duration, 5)
         self.assertEqual(b2.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b2.end_time.strftime('%I:%M %p'), '04:00 AM')
 
         # Only start and end
-        b3 = Break.from_attributes(content, start, end, None)
+        b3 = Break.from_attributes(content, start_time=start, end_time=end, duration=None)
 
         self.assertEqual(b3.duration, 5)
         self.assertEqual(b3.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b3.end_time.strftime('%I:%M %p'), '04:00 AM')
  
         # Only start and duration
-        b4 = Break.from_attributes(content, start, None, duration)
+        b4 = Break.from_attributes(content, start_time=start, end_time=None, duration=duration)
 
         self.assertEqual(b4.duration, 5)
         self.assertEqual(b4.start_time.strftime('%I:%M %p'), '03:55 AM')
         self.assertEqual(b4.end_time.strftime('%I:%M %p'), '04:00 AM')
 
         # Only end and duration
-        b5 = Break.from_attributes(content, None, end, duration)
+        b5 = Break.from_attributes(content, start_time=None, end_time=end, duration=duration)
 
         self.assertEqual(b5.duration, 5)
         self.assertEqual(b5.start_time.strftime('%I:%M %p'), '03:55 AM')
@@ -111,6 +111,14 @@ class TestArchitecture(unittest.TestCase):
 
         m1 = Meeting.from_line(break_line)
         self.assertIsNone(m1)
+
+    def test_specialized_is_pending(self):
+        """Test that is_pending recognizes [B] status"""
+        b1 = Break.from_attributes("A Break", 0, 'B', start_time=dt.datetime.now(), end_time=None, duration=5)
+        self.assertTrue(b1.is_pending)
+
+        b2 = Break.from_attributes("A Break", 0, ' ', start_time=dt.datetime.now(), end_time=None, duration=5)
+        self.assertTrue(b2.is_pending)
 
 if __name__ == '__main__':
     unittest.main()

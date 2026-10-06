@@ -1439,7 +1439,8 @@ class FocusCLI:
             lines = [l.rstrip() for l in f.readlines()]
 
         active_items = {} # (path_tuple) -> Item
-        top_level_contents = [] # To preserve order
+        top_level_contents = [] # Order of top-level items in current Triage block
+        old_top_level = [] # Order of top-level items from earlier blocks
         current_path = [] # list of Item objects
 
         for line in lines:
@@ -1447,6 +1448,9 @@ class FocusCLI:
             if not line_raw.strip(): continue
 
             if "------- Triage" in line_raw:
+                for c in top_level_contents:
+                    if c not in old_top_level:
+                        old_top_level.append(c)
                 top_level_contents = []
                 continue
 
@@ -1487,6 +1491,8 @@ class FocusCLI:
                     if not current_path:
                         if item.content in top_level_contents:
                             top_level_contents.remove(item.content)
+                        if item.content in old_top_level:
+                            old_top_level.remove(item.content)
                     else:
                         parent = current_path[-1]
                         if isinstance(parent, Task):
@@ -1504,7 +1510,8 @@ class FocusCLI:
                          item.parent = parent
                 active_items[full_path] = item
 
-        return [active_items[(c,)] for c in top_level_contents if (c,) in active_items]
+        final_order = top_level_contents + [c for c in old_top_level if c not in top_level_contents]
+        return [active_items[(c,)] for c in final_order if (c,) in active_items]
 
     def _get_multi_line_input(self, context_lines=None, initial_content=None, start_insert=True, add_open_line=True):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:

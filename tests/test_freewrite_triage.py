@@ -87,6 +87,29 @@ class TestFreeWriteTriageSerialization(IsolatedTestCase):
         self.assertIn("[] Task 1", content)
         self.assertIn("[] Task 2", content)
 
+    def test_legacy_or_edited_file_preserves_omitted_pending_tasks_after_triage_block(self):
+        cli = self.create_cli()
+
+        legacy_ledger = (
+            "------- Free Write 10/06/2026 01:03:47 PM -------\n"
+            "[] Task 1\n\n"
+            "------- Prioritized Entry(s) 10/06/2026 03:59:43 PM -------\n"
+            "[] This task on top\n\n"
+            "------- Triage 10/06/2026 03:59:51 PM -------\n"
+            "[] Task 1\n"
+        )
+        with open(cli.filename, 'w') as f:
+            f.write(legacy_ledger)
+
+        cli.load_context()
+
+        # Both pending tasks should be present
+        self.assertEqual(len(cli.triage_stack), 2)
+        # "Task 1" is listed in the latest Triage block so it comes first
+        self.assertEqual(cli.triage_stack[0].content, "Task 1")
+        # "This task on top" was omitted from the latest Triage block so it is placed after
+        self.assertEqual(cli.triage_stack[1].content, "This task on top")
+
 
 if __name__ == '__main__':
     unittest.main()

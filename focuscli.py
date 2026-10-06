@@ -724,16 +724,7 @@ class QuitCommand(Command):
             return "QUIT"
 
         if cli.triage_stack:
-            fd = sys.stdin.fileno()
-            if cli.original_termios:
-                termios.tcsetattr(fd, termios.TCSADRAIN, cli.original_termios)
-            print(f"\n\033[1;33m[!] Session Interrupted.\033[0m")
-            res = input("Rescue remaining tasks to Free Write? (y/n): ").lower()
-            tty.setcbreak(fd)
-            if res == 'y':
-                cli._rescue_stack("Interrupted")
-            else:
-                cli.commit_to_ledger("Interrupted", [])
+            cli.commit_to_ledger("Triage", cli.triage_stack)
         else:
             if cli.mode in ["FOCUS", "BREAK"]:
                 cli.commit_to_ledger("Focus Session Complete", [])
@@ -1358,13 +1349,15 @@ class FocusCLI:
 
     def enter_free_write(self):
         """Appends Free Write marker, launches vi, reloads context, and sorts the stack."""
+        if self.triage_stack:
+            self.commit_to_ledger("Triage", self.triage_stack)
+
         with open(self.filename, 'a') as f:
             f.write(f"\n------- Free Write {get_timestamp()} -------\n\n")
 
         self._run_with_vi(["+$", "+startinsert", self.filename])
 
         self.mode = "TRIAGE"
-        self.commit_to_ledger("Triage Session Started at", [])
         self.load_context()
         self.sort_triage_stack()
         self.initial_stack = copy.deepcopy(self.triage_stack)
@@ -1454,14 +1447,7 @@ class FocusCLI:
             if not line_raw.strip(): continue
 
             if "------- Triage" in line_raw:
-                new_top_level = []
-                for content in top_level_contents:
-                    key = (content,)
-                    if key in active_items and isinstance(active_items[key], Task):
-                        new_top_level.append(content)
-                    else:
-                        active_items.pop(key, None)
-                top_level_contents = new_top_level
+                top_level_contents = []
                 continue
 
             if "-------" in line_raw: continue
@@ -1867,12 +1853,6 @@ class FocusCLI:
         self.commit_to_ledger(f"Break for {duration} at", [break_item])
         return
 
-    def _rescue_stack(self, label="Interrupted"):
-        """Commits the current triage_stack to the ledger if it contains items."""
-        if self.triage_stack:
-            self.commit_to_ledger(label, self.triage_stack)
-            return True
-        return False
 
     def _get_progress_stats(self, focus_item, parent_item):
         completed = 0
@@ -2182,7 +2162,8 @@ class FocusCLI:
         fd = sys.stdin.fileno()
         self.original_termios = termios.tcgetattr(fd)
         def signal_handler(sig, frame):
-            self._rescue_stack("Interrupted (SIGTERM)")
+            if self.triage_stack:
+                self.commit_to_ledger("Interrupted (SIGTERM)", self.triage_stack)
             if self.original_termios: termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
             sys.exit(0)
         signal.signal(signal.SIGTERM, signal_handler)
@@ -2263,7 +2244,9 @@ class FocusCLI:
                         if cursor_pos < len(buffer): buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
                     elif len(char) == 1 and ord(char) >= 32:
                         buffer = buffer[:cursor_pos] + char + buffer[cursor_pos:]; cursor_pos += 1
-        except KeyboardInterrupt: self._rescue_stack("Interrupted")
+        except KeyboardInterrupt:
+            if self.triage_stack:
+                self.commit_to_ledger("Interrupted", self.triage_stack)
         finally: termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
     def render_triage(self):

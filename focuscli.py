@@ -724,7 +724,7 @@ class QuitCommand(Command):
             return "QUIT"
 
         if cli.triage_stack:
-            cli.commit_to_ledger("Triage", cli.triage_stack)
+            cli._write_triage_stack()
         else:
             if cli.mode in ["FOCUS", "BREAK"]:
                 cli.commit_to_ledger("Focus Session Complete", [])
@@ -1043,7 +1043,7 @@ class DeferCommand(Command):
                     cli.commit_to_ledger("Deferred from last session", [t_item], target_file=res)
                     cli.commit_to_ledger(f"Deferred to {res}", [l_item])
 
-            cli.commit_to_ledger("Triage", cli.triage_stack)
+            cli._write_triage_stack()
             cli.timers.task_timer.stop()
             cli.initial_stack = copy.deepcopy(cli.triage_stack)
             return
@@ -1081,7 +1081,7 @@ class DeferCommand(Command):
             else:
                 cli.triage_stack.append(new_item)
 
-            cli.commit_to_ledger("Triage", cli.triage_stack)
+            cli._write_triage_stack()
             cli.timers.task_timer.stop()
             cli.initial_stack = copy.deepcopy(cli.triage_stack)
             cli.triage_stack.populate(cli.triage_stack.get_all())
@@ -1100,7 +1100,7 @@ class DeferCommand(Command):
                 # Default single defer: to the end of the focus_queue
                 cli.triage_stack.append(item)
 
-            cli.commit_to_ledger("Triage", cli.triage_stack)
+            cli._write_triage_stack()
             cli.timers.task_timer.stop()
             cli.initial_stack = copy.deepcopy(cli.triage_stack)
             return
@@ -1347,10 +1347,14 @@ class FocusCLI:
         subprocess.run(["vi"] + args)
         tty.setcbreak(fd)
 
-    def enter_free_write(self):
-        """Appends Free Write marker, launches vi, reloads context, and sorts the stack."""
+    def _write_triage_stack(self):
+        """Commits the current triage_stack to the ledger if non-empty."""
         if self.triage_stack:
             self.commit_to_ledger("Triage", self.triage_stack)
+
+    def enter_free_write(self):
+        """Appends Free Write marker, launches vi, reloads context, and sorts the stack."""
+        self._write_triage_stack()
 
         with open(self.filename, 'a') as f:
             f.write(f"\n------- Free Write {get_timestamp()} -------\n\n")
